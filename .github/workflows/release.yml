@@ -179,7 +179,10 @@ jobs:
           pattern: october-bus-*
           merge-multiple: true
       - name: Create checksums
-        run: sha256sum dist/* > dist/checksums.txt
+        working-directory: dist
+        run: |
+          sha256sum * > checksums.txt
+          sha256sum -c checksums.txt
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
