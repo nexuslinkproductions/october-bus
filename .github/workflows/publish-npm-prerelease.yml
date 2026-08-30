@@ -42,5 +42,3 @@ jobs:
       - name: Verify prerelease version
         run: node -e "if (!require('./package.json').version.includes('-')) throw new Error('npm prerelease version required')"
       - run: npm publish --provenance --access public --tag next
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -20,4 +20,4 @@ Platform code signing and notarization require the relevant platform identities.
 
 ## TypeScript prereleases
 
-The TypeScript client uses pre-1.0 versions. Install the current package with `npm install @october-dev/october-bus@next`. The prerelease workflow runs typecheck, build, error tests, and Go interoperability tests before publishing. Stable releases require an approved stable protocol and SDK compatibility policy.
+The TypeScript client uses pre-1.0 versions. Install the current package with `npm install @october-dev/october-bus@next`. The prerelease workflow runs typecheck, build, error tests, and Go interoperability tests before publishing. It uses npm trusted publishing with short-lived GitHub OIDC credentials and provenance. Stable releases require an approved stable protocol and SDK compatibility policy.
