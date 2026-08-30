@@ -92,6 +92,8 @@ MCP can provide the integration surface. October Bus defines how collaborating a
 
 ## Quickstart
 
+Prebuilt release-candidate archives are available on the [releases page](https://github.com/october-dev/october-bus/releases). Download the archive for your operating system and architecture, verify it against `checksums.txt`, extract it, and place `october-bus` on your `PATH`.
+
 Building October Bus from source requires Go 1.25 or newer.
 
 ```bash

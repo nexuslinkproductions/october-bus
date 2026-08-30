@@ -8,6 +8,8 @@ A tag matching `v*` runs the full Go and TypeScript validation suite, builds the
 
 Release binaries embed the version from the tag. Tags containing a hyphen create a prerelease.
 
+Download the archive for your operating system and architecture from the [GitHub releases page](https://github.com/october-dev/october-bus/releases). Verify its SHA-256 value against `checksums.txt`, extract the archive, and place the `october-bus` binary on your `PATH`. Each archive also contains the conformance runner, license, specification, and documentation.
+
 Before creating a tag:
 
 1. confirm the protocol and package versions;
