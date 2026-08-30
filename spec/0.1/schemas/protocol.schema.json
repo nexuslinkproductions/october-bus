@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/october-dev/october-bus/spec/0.1/schemas/protocol.schema.json",
+  "title": "October Bus protocol 0.1",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "instant": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lifecycle": {
+      "type": "string",
+      "enum": ["starting", "ready", "working", "idle", "needs_input", "offline"]
+    },
+    "messageMode": {
+      "type": "string",
+      "enum": ["notify", "request", "response"]
+    },
+    "deliveryState": {
+      "type": "string",
+      "enum": ["queued", "reserved", "delivered", "acknowledged", "expired"]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "description": { "type": "string", "maxLength": 512 }
+      }
+    },
+    "contextItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "title"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["text", "file", "url", "reference"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "text": { "type": "string", "maxLength": 65536 },
+        "uri": { "type": "string", "maxLength": 4096 },
+        "mediaType": { "type": "string" }
+      }
+    },
+    "createScopeInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "protocolVersion", "runtimeVersion", "status", "startedAt"],
+      "properties": {
+        "name": { "const": "october-bus" },
+        "protocolVersion": { "const": "0.1" },
+        "runtimeVersion": { "type": "string", "minLength": 1 },
+        "status": { "const": "ready" },
+        "startedAt": { "$ref": "#/$defs/instant" }
+      }
+    },
+    "createScopeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopeId", "scopeToken"],
+      "properties": {
+        "scopeId": { "$ref": "#/$defs/identifier" },
+        "scopeToken": { "type": "string", "minLength": 1 }
+      }
+    },
+    "registerAgentInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/capability" }
+        },
+        "connectTo": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "leaseMs": {
+          "anyOf": [
+            { "const": 0 },
+            { "type": "integer", "minimum": 30000, "maximum": 86400000 }
+          ]
+        }
+      }
+    },
+    "agentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopeId", "agentId", "executionId"],
+      "properties": {
+        "scopeId": { "$ref": "#/$defs/identifier" },
+        "agentId": { "$ref": "#/$defs/identifier" },
+        "executionId": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "registerAgentResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopeId", "agentId", "executionId", "agentToken", "leaseExpiresAt"],
+      "properties": {
+        "scopeId": { "$ref": "#/$defs/identifier" },
+        "agentId": { "$ref": "#/$defs/identifier" },
+        "executionId": { "$ref": "#/$defs/identifier" },
+        "agentToken": { "type": "string", "minLength": 1 },
+        "leaseExpiresAt": { "$ref": "#/$defs/instant" }
+      }
+    },
+    "heartbeatInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "ready"],
+      "properties": {
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "ready": { "type": "boolean" },
+        "leaseMs": {
+          "anyOf": [
+            { "const": 0 },
+            { "type": "integer", "minimum": 30000, "maximum": 86400000 }
+          ]
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName", "capabilities", "lifecycle", "ready", "reachable", "executionId", "registeredAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/capability" }
+        },
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "ready": { "type": "boolean" },
+        "reachable": { "type": "boolean" },
+        "executionId": { "$ref": "#/$defs/identifier" },
+        "registeredAt": { "$ref": "#/$defs/instant" },
+        "updatedAt": { "$ref": "#/$defs/instant" }
+      }
+    },
+    "sendMessageInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to", "body"],
+      "properties": {
+        "to": { "$ref": "#/$defs/identifier" },
+        "body": { "type": "string", "minLength": 1, "maxLength": 65536 },
+        "mode": { "$ref": "#/$defs/messageMode" },
+        "responseTo": { "$ref": "#/$defs/identifier" },
+        "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "expiresInMs": { "type": "integer", "minimum": 0, "maximum": 2592000000 },
+        "context": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/contextItem" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["mode"],
+            "properties": { "mode": { "const": "response" } }
+          },
+          "then": { "required": ["responseTo"] },
+          "else": { "not": { "required": ["responseTo"] } }
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scopeId", "from", "to", "mode", "body", "context", "state", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "scopeId": { "$ref": "#/$defs/identifier" },
+        "from": { "$ref": "#/$defs/identifier" },
+        "to": { "$ref": "#/$defs/identifier" },
+        "mode": { "$ref": "#/$defs/messageMode" },
+        "body": { "type": "string", "minLength": 1, "maxLength": 65536 },
+        "context": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/contextItem" }
+        },
+        "responseTo": { "$ref": "#/$defs/identifier" },
+        "state": { "$ref": "#/$defs/deliveryState" },
+        "createdAt": { "$ref": "#/$defs/instant" },
+        "expiresAt": { "$ref": "#/$defs/instant" },
+        "deliveredAt": { "$ref": "#/$defs/instant" },
+        "acknowledgedAt": { "$ref": "#/$defs/instant" },
+        "repliedAt": { "$ref": "#/$defs/instant" },
+        "responseMessageId": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "deliveryReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["messageId", "state", "acceptedAt"],
+      "properties": {
+        "messageId": { "$ref": "#/$defs/identifier" },
+        "state": { "$ref": "#/$defs/deliveryState" },
+        "acceptedAt": { "$ref": "#/$defs/instant" },
+        "deliveredAt": { "$ref": "#/$defs/instant" },
+        "acknowledgedAt": { "$ref": "#/$defs/instant" },
+        "repliedAt": { "$ref": "#/$defs/instant" },
+        "responseMessageId": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "inboxReservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "expiresAt", "messages"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "expiresAt": { "$ref": "#/$defs/instant" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } }
+      }
+    },
+    "addTaskInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scopeId", "description", "createdBy", "status", "dependencies", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "scopeId": { "$ref": "#/$defs/identifier" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "createdBy": { "$ref": "#/$defs/identifier" },
+        "claimedBy": { "$ref": "#/$defs/identifier" },
+        "status": { "type": "string", "enum": ["open", "claimed", "done"] },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "note": { "type": "string", "maxLength": 16384 },
+        "createdAt": { "$ref": "#/$defs/instant" },
+        "updatedAt": { "$ref": "#/$defs/instant" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "open" } } },
+          "then": { "not": { "required": ["claimedBy"] } },
+          "else": { "required": ["claimedBy"] }
+        }
+      ]
+    },
+    "askHumanInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "options": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "anyOf": [
+            { "maxItems": 0 },
+            { "minItems": 2, "maxItems": 4 }
+          ]
+        }
+      }
+    },
+    "humanEscalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scopeId", "agentId", "question", "options", "status", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "scopeId": { "$ref": "#/$defs/identifier" },
+        "agentId": { "$ref": "#/$defs/identifier" },
+        "question": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "options": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "status": { "type": "string", "enum": ["pending", "resolved"] },
+        "answer": { "type": "string", "maxLength": 16384 },
+        "createdAt": { "$ref": "#/$defs/instant" },
+        "resolvedAt": { "$ref": "#/$defs/instant" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["INVALID_ARGUMENT", "UNAUTHENTICATED", "PERMISSION_DENIED", "NOT_FOUND", "METHOD_NOT_ALLOWED", "CONFLICT", "BACKPRESSURE", "INTERNAL"]
+        },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

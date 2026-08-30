@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/october-dev/october-bus/spec/0.1/schemas/adapter-manifest.schema.json",
+  "title": "October Bus adapter manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "harnessFamily",
+    "status",
+    "protocolVersions",
+    "transport",
+    "delivery",
+    "lifecycleEvidence",
+    "capabilities",
+    "testedVersions",
+    "platforms",
+    "maintainer",
+    "repository"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "harnessFamily": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["experimental", "verified", "retired"] },
+    "protocolVersions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" }
+    },
+    "transport": { "type": "string", "enum": ["http", "mcp", "native"] },
+    "delivery": { "type": "string", "enum": ["pull", "wake", "active"] },
+    "lifecycleEvidence": { "type": "string", "enum": ["lease", "process", "host"] },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["discovery", "messaging", "requests", "tasks", "escalation", "bounded-context", "wake", "lifecycle"]
+      }
+    },
+    "testedVersions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "platforms": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "enum": ["macos", "linux", "windows"] }
+    },
+    "maintainer": { "type": "string", "minLength": 1 },
+    "repository": { "type": "string", "format": "uri" },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "conformanceCommand": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "verified" } } },
+      "then": {
+        "required": ["conformanceCommand"],
+        "properties": { "testedVersions": { "minItems": 1 } }
+      }
+    }
+  ]
+}

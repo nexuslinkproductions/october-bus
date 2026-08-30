@@ -20,7 +20,9 @@ const usage = `October Bus
 
 Usage:
   october-bus start [--port <port>]
+  october-bus stop
   october-bus status
+  october-bus doctor [--json]
   october-bus scope create [scope-id]
   october-bus agent run --id <id> --name <name> [--connect-to <peer>] -- <command> [args...]
   october-bus demo
@@ -54,10 +56,132 @@ func start(args []string) error {
 	fmt.Printf("Run file: %s\n", daemon.Paths.RunFile)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	<-ctx.Done()
+	var serveErr error
+	select {
+	case <-ctx.Done():
+	case <-daemon.Server.ShutdownRequested():
+	case serveErr = <-daemon.Server.Done():
+	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return daemon.Stop(shutdown)
+	stopErr := daemon.Stop(shutdown)
+	if serveErr != nil {
+		return fmt.Errorf("October Bus stopped unexpectedly: %w", serveErr)
+	}
+	return stopErr
+}
+
+func stop() error {
+	paths, err := bus.DefaultDaemonPaths()
+	if err != nil {
+		return err
+	}
+	run, err := bus.ReadRunFile(paths.RunFile)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := (bus.Client{Address: run.Address, Token: run.AdminToken}).Shutdown(ctx); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(paths.RunFile); errors.Is(err, os.ErrNotExist) {
+			fmt.Println("October Bus stopped")
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errors.New("October Bus did not stop within 10 seconds")
+}
+
+type diagnosticReport struct {
+	Healthy          bool   `json:"healthy"`
+	RuntimeVersion   string `json:"runtimeVersion"`
+	ProtocolVersion  string `json:"protocolVersion"`
+	Address          string `json:"address,omitempty"`
+	PID              int    `json:"pid,omitempty"`
+	DataDirectory    string `json:"dataDirectory"`
+	RuntimeDirectory string `json:"runtimeDirectory"`
+	DatabaseExists   bool   `json:"databaseExists"`
+	RunFileExists    bool   `json:"runFileExists"`
+	Problem          string `json:"problem,omitempty"`
+}
+
+func doctor(args []string) error {
+	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	jsonOutput := flags.Bool("json", false, "print machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	paths, err := bus.DefaultDaemonPaths()
+	if err != nil {
+		return err
+	}
+	report := diagnosticReport{
+		RuntimeVersion: bus.Version, ProtocolVersion: bus.ProtocolVersion,
+		DataDirectory: paths.DataDir, RuntimeDirectory: paths.RuntimeDir,
+	}
+	if _, err := os.Stat(paths.Database); err == nil {
+		report.DatabaseExists = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		report.Problem = err.Error()
+	}
+	if _, err := os.Stat(paths.RunFile); err == nil {
+		report.RunFileExists = true
+	} else if !errors.Is(err, os.ErrNotExist) && report.Problem == "" {
+		report.Problem = err.Error()
+	}
+	if report.RunFileExists {
+		run, readErr := bus.ReadRunFile(paths.RunFile)
+		if readErr != nil {
+			report.Problem = readErr.Error()
+		} else {
+			report.Address, report.PID = run.Address, run.PID
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			health, healthErr := (bus.Client{Address: run.Address}).Health(ctx)
+			cancel()
+			if healthErr != nil {
+				report.Problem = healthErr.Error()
+			} else if health.ProtocolVersion != run.ProtocolVersion {
+				report.Problem = "run file and daemon protocol versions differ"
+			} else {
+				report.Healthy = health.Status == "ready"
+				report.RuntimeVersion = health.RuntimeVersion
+				report.ProtocolVersion = health.ProtocolVersion
+			}
+		}
+	} else if report.Problem == "" {
+		report.Problem = "October Bus is not running"
+	}
+	if *jsonOutput {
+		encoded, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(encoded))
+	} else {
+		state := "not ready"
+		if report.Healthy {
+			state = "ready"
+		}
+		fmt.Printf("October Bus is %s\n", state)
+		fmt.Printf("Runtime %s, protocol %s\n", report.RuntimeVersion, report.ProtocolVersion)
+		fmt.Printf("Data: %s\n", report.DataDirectory)
+		fmt.Printf("Runtime: %s\n", report.RuntimeDirectory)
+		if report.Address != "" {
+			fmt.Printf("Endpoint: %s, pid %d\n", report.Address, report.PID)
+		}
+		if report.Problem != "" {
+			fmt.Printf("Problem: %s\n", report.Problem)
+		}
+	}
+	if !report.Healthy {
+		return errors.New("October Bus diagnostics did not pass")
+	}
+	return nil
 }
 
 func status() error {
@@ -76,7 +200,7 @@ func status() error {
 		return err
 	}
 	fmt.Printf("October Bus is %s at %s\n", health.Status, run.Address)
-	fmt.Printf("Protocol %s, pid %d\n", health.ProtocolVersion, run.PID)
+	fmt.Printf("Runtime %s, protocol %s, pid %d\n", health.RuntimeVersion, health.ProtocolVersion, run.PID)
 	return nil
 }
 
@@ -251,8 +375,12 @@ func run() error {
 	switch args[0] {
 	case "start":
 		return start(args[1:])
+	case "stop":
+		return stop()
 	case "status":
 		return status()
+	case "doctor":
+		return doctor(args[1:])
 	case "scope":
 		if len(args) >= 2 && args[1] == "create" {
 			id := ""

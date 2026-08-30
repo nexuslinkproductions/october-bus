@@ -26,13 +26,16 @@ type ServerOptions struct {
 }
 
 type Server struct {
-	runtime    *Runtime
-	options    ServerOptions
-	httpServer *http.Server
-	listener   net.Listener
-	mcpHandler http.Handler
-	address    string
-	closeOnce  sync.Once
+	runtime      *Runtime
+	options      ServerOptions
+	httpServer   *http.Server
+	listener     net.Listener
+	mcpHandler   http.Handler
+	address      string
+	closeOnce    sync.Once
+	serveDone    chan error
+	shutdown     chan struct{}
+	shutdownOnce sync.Once
 }
 
 type mcpTokenKey struct{}
@@ -44,7 +47,10 @@ func NewServer(runtime *Runtime, options ServerOptions) *Server {
 	if options.StartedAt == "" {
 		options.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	server := &Server{runtime: runtime, options: options}
+	server := &Server{
+		runtime: runtime, options: options,
+		serveDone: make(chan error, 1), shutdown: make(chan struct{}),
+	}
 	server.mcpHandler = mcp.NewStreamableHTTPHandler(func(request *http.Request) *mcp.Server {
 		token, _ := request.Context().Value(mcpTokenKey{}).(string)
 		if token == "" {
@@ -73,14 +79,27 @@ func (s *Server) Start() (string, error) {
 	s.listener = listener
 	s.address = "http://" + listener.Addr().String()
 	go func() {
-		if err := s.httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		err := s.httpServer.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		} else if err != nil {
 			_ = listener.Close()
 		}
+		s.serveDone <- err
+		close(s.serveDone)
 	}()
 	return s.address, nil
 }
 
 func (s *Server) Address() string { return s.address }
+
+func (s *Server) Done() <-chan error { return s.serveDone }
+
+func (s *Server) ShutdownRequested() <-chan struct{} { return s.shutdown }
+
+func (s *Server) requestShutdown() {
+	s.shutdownOnce.Do(func() { close(s.shutdown) })
+}
 
 func (s *Server) Stop(ctx context.Context) error {
 	var stopErr error
@@ -171,9 +190,58 @@ func pathParts(path, prefix string) []string {
 	return strings.Split(rest, "/")
 }
 
+func apiRouteMethods(path string) []string {
+	switch path {
+	case "/v1/admin/shutdown", "/v1/scopes", "/v1/links", "/v1/messages", "/v1/messages/ack", "/v1/inbox/reserve", "/v1/tasks", "/v1/escalations":
+		if path == "/v1/tasks" {
+			return []string{http.MethodGet, http.MethodPost}
+		}
+		return []string{http.MethodPost}
+	case "/v1/agents":
+		return []string{http.MethodGet, http.MethodPost}
+	case "/v1/me/heartbeat":
+		return []string{http.MethodPatch}
+	case "/v1/peers", "/v1/scope/escalations":
+		return []string{http.MethodGet}
+	}
+	if len(pathParts(path, "/v1/messages/")) == 1 {
+		return []string{http.MethodGet}
+	}
+	inbox := pathParts(path, "/v1/inbox/")
+	if len(inbox) == 2 && (inbox[1] == "commit" || inbox[1] == "release") {
+		return []string{http.MethodPost}
+	}
+	tasks := pathParts(path, "/v1/tasks/")
+	if len(tasks) == 2 && (tasks[1] == "claim" || tasks[1] == "release" || tasks[1] == "complete") {
+		return []string{http.MethodPost}
+	}
+	if len(pathParts(path, "/v1/escalations/")) == 1 {
+		return []string{http.MethodGet}
+	}
+	escalations := pathParts(path, "/v1/scope/escalations/")
+	if len(escalations) == 2 && escalations[1] == "resolve" {
+		return []string{http.MethodPost}
+	}
+	return nil
+}
+
+func methodAllowed(method string, allowed []string) bool {
+	for _, value := range allowed {
+		if method == value {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if request.Method == http.MethodGet && request.URL.Path == "/health" {
-		writeJSON(response, http.StatusOK, Health{Name: "october-bus", ProtocolVersion: ProtocolVersion, Status: "ready", StartedAt: s.options.StartedAt})
+	if request.URL.Path == "/health" {
+		if request.Method == http.MethodGet {
+			writeJSON(response, http.StatusOK, Health{Name: "october-bus", ProtocolVersion: ProtocolVersion, RuntimeVersion: Version, Status: "ready", StartedAt: s.options.StartedAt})
+		} else {
+			response.Header().Set("Allow", http.MethodGet)
+			writeFailure(response, Errorf(CodeMethodNotAllowed, "Method not allowed"))
+		}
 		return
 	}
 	if request.URL.Path == "/mcp" {
@@ -197,6 +265,26 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 func (s *Server) serveAPI(response http.ResponseWriter, request *http.Request) error {
 	ctx := request.Context()
 	method, path := request.Method, request.URL.Path
+	allowed := apiRouteMethods(path)
+	if len(allowed) == 0 {
+		return Errorf(CodeNotFound, "Route not found")
+	}
+	if !methodAllowed(method, allowed) {
+		response.Header().Set("Allow", strings.Join(allowed, ", "))
+		return Errorf(CodeMethodNotAllowed, "Method not allowed")
+	}
+	if method == http.MethodPost && path == "/v1/admin/shutdown" {
+		if err := s.requireAdmin(request); err != nil {
+			return err
+		}
+		var input emptyInput
+		if err := decodeBody(response, request, &input); err != nil {
+			return err
+		}
+		writeResult(response, http.StatusAccepted, map[string]bool{"stopping": true})
+		s.requestShutdown()
+		return nil
+	}
 	if method == http.MethodPost && path == "/v1/scopes" {
 		if err := s.requireAdmin(request); err != nil {
 			return err

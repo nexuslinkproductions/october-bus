@@ -183,6 +183,7 @@ type RunFile struct {
 type Health struct {
 	Name            string `json:"name"`
 	ProtocolVersion string `json:"protocolVersion"`
+	RuntimeVersion  string `json:"runtimeVersion"`
 	Status          string `json:"status"`
 	StartedAt       string `json:"startedAt"`
 }

@@ -12,6 +12,7 @@ const (
 	CodeUnauthenticated  ErrorCode = "UNAUTHENTICATED"
 	CodePermissionDenied ErrorCode = "PERMISSION_DENIED"
 	CodeNotFound         ErrorCode = "NOT_FOUND"
+	CodeMethodNotAllowed ErrorCode = "METHOD_NOT_ALLOWED"
 	CodeConflict         ErrorCode = "CONFLICT"
 	CodeBackpressure     ErrorCode = "BACKPRESSURE"
 	CodeInternal         ErrorCode = "INTERNAL"
@@ -46,6 +47,8 @@ func ErrorStatus(err error) int {
 		return http.StatusForbidden
 	case CodeNotFound:
 		return http.StatusNotFound
+	case CodeMethodNotAllowed:
+		return http.StatusMethodNotAllowed
 	case CodeConflict:
 		return http.StatusConflict
 	case CodeBackpressure:

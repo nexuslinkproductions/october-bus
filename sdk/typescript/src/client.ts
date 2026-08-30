@@ -27,14 +27,33 @@ interface Failure {
   error: { code: BusErrorCode; message: string; details?: Record<string, unknown> }
 }
 
+export interface OperationOptions {
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
 async function request<T>(
   address: string,
   token: string | undefined,
   method: string,
   path: string,
-  value?: unknown
+  value?: unknown,
+  options: OperationOptions = {}
 ): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 30_000
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new BusError('INVALID_ARGUMENT', 'timeoutMs must be a positive finite number')
+  }
+  const controller = new AbortController()
+  const onAbort = () => controller.abort(options.signal?.reason ?? new Error('Operation aborted'))
+  if (options.signal?.aborted) onAbort()
+  else options.signal?.addEventListener('abort', onAbort, { once: true })
+  const timeout = setTimeout(
+    () => controller.abort(new Error(`October Bus request timed out after ${timeoutMs}ms`)),
+    timeoutMs
+  )
   let response: Response
+  let text: string
   try {
     response = await fetch(`${address}${path}`, {
       method,
@@ -43,13 +62,18 @@ async function request<T>(
         ...(value === undefined ? {} : { 'content-type': 'application/json' }),
         ...(token === undefined ? {} : { authorization: `Bearer ${token}` })
       },
-      ...(value === undefined ? {} : { body: JSON.stringify(value) })
+      ...(value === undefined ? {} : { body: JSON.stringify(value) }),
+      signal: controller.signal
     })
+    text = await response.text()
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Network request failed'
+    const cause = controller.signal.aborted ? controller.signal.reason : error
+    const message = cause instanceof Error ? cause.message : 'Network request failed'
     throw new BusError('INTERNAL', `October Bus request failed: ${message}`)
+  } finally {
+    clearTimeout(timeout)
+    options.signal?.removeEventListener('abort', onAbort)
   }
-  const text = await response.text()
   let payload: Success<T> | Failure | T
   try {
     payload = JSON.parse(text) as Success<T> | Failure | T
@@ -84,12 +108,16 @@ export class OctoberBusAdminClient {
     private readonly adminToken: string
   ) {}
 
-  health(): Promise<BusHealth> {
-    return request(this.address, undefined, 'GET', '/health')
+  health(options?: OperationOptions): Promise<BusHealth> {
+    return request(this.address, undefined, 'GET', '/health', undefined, options)
   }
 
-  createScope(input: CreateScopeInput = {}): Promise<CreateScopeResult> {
-    return request(this.address, this.adminToken, 'POST', '/v1/scopes', input)
+  createScope(input: CreateScopeInput = {}, options?: OperationOptions): Promise<CreateScopeResult> {
+    return request(this.address, this.adminToken, 'POST', '/v1/scopes', input, options)
+  }
+
+  async shutdown(options?: OperationOptions): Promise<void> {
+    await request(this.address, this.adminToken, 'POST', '/v1/admin/shutdown', {}, options)
   }
 }
 
@@ -99,26 +127,26 @@ export class OctoberBusScopeClient {
     readonly scopeToken: string
   ) {}
 
-  registerAgent(input: RegisterAgentInput): Promise<RegisterAgentResult> {
-    return request(this.address, this.scopeToken, 'POST', '/v1/agents', input)
+  registerAgent(input: RegisterAgentInput, options?: OperationOptions): Promise<RegisterAgentResult> {
+    return request(this.address, this.scopeToken, 'POST', '/v1/agents', input, options)
   }
 
-  listAgents(): Promise<Agent[]> {
-    return request(this.address, this.scopeToken, 'GET', '/v1/agents')
+  listAgents(options?: OperationOptions): Promise<Agent[]> {
+    return request(this.address, this.scopeToken, 'GET', '/v1/agents', undefined, options)
   }
 
-  async linkAgents(left: string, right: string): Promise<void> {
-    await request(this.address, this.scopeToken, 'POST', '/v1/links', { left, right })
+  async linkAgents(left: string, right: string, options?: OperationOptions): Promise<void> {
+    await request(this.address, this.scopeToken, 'POST', '/v1/links', { left, right }, options)
   }
 
-  listEscalations(): Promise<HumanEscalation[]> {
-    return request(this.address, this.scopeToken, 'GET', '/v1/scope/escalations')
+  listEscalations(options?: OperationOptions): Promise<HumanEscalation[]> {
+    return request(this.address, this.scopeToken, 'GET', '/v1/scope/escalations', undefined, options)
   }
 
-  resolveEscalation(id: string, answer: string): Promise<HumanEscalation> {
+  resolveEscalation(id: string, answer: string, options?: OperationOptions): Promise<HumanEscalation> {
     return request(this.address, this.scopeToken, 'POST', `/v1/scope/escalations/${encodeURIComponent(id)}/resolve`, {
       answer
-    })
+    }, options)
   }
 }
 
@@ -128,94 +156,97 @@ export class OctoberBusClient {
     readonly agentToken: string
   ) {}
 
-  heartbeat(lifecycle: AgentLifecycle, ready = true, leaseMs?: number): Promise<Agent> {
+  heartbeat(lifecycle: AgentLifecycle, ready = true, leaseMs?: number, options?: OperationOptions): Promise<Agent> {
     return request(this.address, this.agentToken, 'PATCH', '/v1/me/heartbeat', {
       lifecycle,
       ready,
       ...(leaseMs === undefined ? {} : { leaseMs })
-    })
+    }, options)
   }
 
-  listPeers(): Promise<Agent[]> {
-    return request(this.address, this.agentToken, 'GET', '/v1/peers')
+  listPeers(options?: OperationOptions): Promise<Agent[]> {
+    return request(this.address, this.agentToken, 'GET', '/v1/peers', undefined, options)
   }
 
-  sendMessage(input: SendMessageInput): Promise<DeliveryReceipt> {
-    return request(this.address, this.agentToken, 'POST', '/v1/messages', input)
+  sendMessage(input: SendMessageInput, options?: OperationOptions): Promise<DeliveryReceipt> {
+    return request(this.address, this.agentToken, 'POST', '/v1/messages', input, options)
   }
 
-  receipt(messageId: string): Promise<DeliveryReceipt> {
-    return request(this.address, this.agentToken, 'GET', `/v1/messages/${encodeURIComponent(messageId)}`)
+  receipt(messageId: string, options?: OperationOptions): Promise<DeliveryReceipt> {
+    return request(this.address, this.agentToken, 'GET', `/v1/messages/${encodeURIComponent(messageId)}`, undefined, options)
   }
 
-  reserveInbox(limit = 50): Promise<InboxReservation | null> {
-    return request(this.address, this.agentToken, 'POST', '/v1/inbox/reserve', { limit })
+  reserveInbox(limit = 50, options?: OperationOptions): Promise<InboxReservation | null> {
+    return request(this.address, this.agentToken, 'POST', '/v1/inbox/reserve', { limit }, options)
   }
 
-  commitInbox(reservationId: string): Promise<BusMessage[]> {
+  commitInbox(reservationId: string, options?: OperationOptions): Promise<BusMessage[]> {
     return request(
       this.address,
       this.agentToken,
       'POST',
       `/v1/inbox/${encodeURIComponent(reservationId)}/commit`,
-      {}
+      {},
+      options
     )
   }
 
-  async releaseInbox(reservationId: string): Promise<void> {
+  async releaseInbox(reservationId: string, options?: OperationOptions): Promise<void> {
     await request(
       this.address,
       this.agentToken,
       'POST',
       `/v1/inbox/${encodeURIComponent(reservationId)}/release`,
-      {}
+      {},
+      options
     )
   }
 
-  async pullInbox(limit = 50): Promise<BusMessage[]> {
-    const reservation = await this.reserveInbox(limit)
-    return reservation ? this.commitInbox(reservation.id) : []
+  async pullInbox(limit = 50, options?: OperationOptions): Promise<BusMessage[]> {
+    const reservation = await this.reserveInbox(limit, options)
+    return reservation ? this.commitInbox(reservation.id, options) : []
   }
 
-  async acknowledgeMessages(messageIds: string[]): Promise<number> {
+  async acknowledgeMessages(messageIds: string[], options?: OperationOptions): Promise<number> {
     const result = await request<{ acknowledged: number }>(
       this.address,
       this.agentToken,
       'POST',
       '/v1/messages/ack',
-      { messageIds }
+      { messageIds },
+      options
     )
     return result.acknowledged
   }
 
-  addTask(description: string, dependencies: string[] = []): Promise<BusTask> {
-    return request(this.address, this.agentToken, 'POST', '/v1/tasks', { description, dependencies })
+  addTask(description: string, dependencies: string[] = [], options?: OperationOptions): Promise<BusTask> {
+    return request(this.address, this.agentToken, 'POST', '/v1/tasks', { description, dependencies }, options)
   }
 
-  listTasks(): Promise<BusTask[]> {
-    return request(this.address, this.agentToken, 'GET', '/v1/tasks')
+  listTasks(options?: OperationOptions): Promise<BusTask[]> {
+    return request(this.address, this.agentToken, 'GET', '/v1/tasks', undefined, options)
   }
 
-  claimTask(taskId: string): Promise<BusTask> {
-    return request(this.address, this.agentToken, 'POST', `/v1/tasks/${encodeURIComponent(taskId)}/claim`, {})
+  claimTask(taskId: string, options?: OperationOptions): Promise<BusTask> {
+    return request(this.address, this.agentToken, 'POST', `/v1/tasks/${encodeURIComponent(taskId)}/claim`, {}, options)
   }
 
-  releaseTask(taskId: string): Promise<BusTask> {
-    return request(this.address, this.agentToken, 'POST', `/v1/tasks/${encodeURIComponent(taskId)}/release`, {})
+  releaseTask(taskId: string, options?: OperationOptions): Promise<BusTask> {
+    return request(this.address, this.agentToken, 'POST', `/v1/tasks/${encodeURIComponent(taskId)}/release`, {}, options)
   }
 
-  completeTask(taskId: string, note?: string): Promise<BusTask> {
+  completeTask(taskId: string, note?: string, options?: OperationOptions): Promise<BusTask> {
     return request(this.address, this.agentToken, 'POST', `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
       ...(note === undefined ? {} : { note })
-    })
+    }, options)
   }
 
-  askHuman(input: AskHumanInput): Promise<HumanEscalation> {
-    return request(this.address, this.agentToken, 'POST', '/v1/escalations', input)
+  askHuman(input: AskHumanInput, options?: OperationOptions): Promise<HumanEscalation> {
+    return request(this.address, this.agentToken, 'POST', '/v1/escalations', input, options)
   }
 
-  escalation(id: string): Promise<HumanEscalation> {
-    return request(this.address, this.agentToken, 'GET', `/v1/escalations/${encodeURIComponent(id)}`)
+  escalation(id: string, options?: OperationOptions): Promise<HumanEscalation> {
+    return request(this.address, this.agentToken, 'GET', `/v1/escalations/${encodeURIComponent(id)}`, undefined, options)
   }
 
   mcpEndpoint(): { url: string; headers: Record<string, string> } {

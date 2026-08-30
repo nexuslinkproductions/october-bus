@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "claude-code-mcp",
+  "harnessFamily": "Claude Code",
+  "status": "experimental",
+  "protocolVersions": ["0.1"],
+  "transport": "mcp",
+  "delivery": "pull",
+  "lifecycleEvidence": "process",
+  "capabilities": ["discovery", "messaging", "requests", "tasks", "escalation", "bounded-context"],
+  "testedVersions": [],
+  "platforms": ["macos", "linux", "windows"],
+  "maintainer": "October",
+  "repository": "https://github.com/october-dev/october-bus",
+  "limitations": [
+    "Not yet conformance-verified",
+    "Pull-only delivery",
+    "Process reachability does not prove model readiness"
+  ]
+}

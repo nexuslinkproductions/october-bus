@@ -58,6 +58,9 @@ func StartAgentSession(ctx context.Context, options AgentSessionOptions) (*Agent
 	if err := validateLifecycle(lifecycle); err != nil {
 		return nil, err
 	}
+	if lifecycle == LifecycleOffline && options.InitialReady {
+		return nil, Errorf(CodeInvalidArgument, "offline agents cannot be ready")
+	}
 	registrationInput := options.Registration
 	registrationInput.LeaseMS = leaseMS
 	scopeClient := Client{Address: options.Address, Token: options.ScopeToken, HTTP: options.HTTP}
@@ -67,6 +70,9 @@ func StartAgentSession(ctx context.Context, options AgentSessionOptions) (*Agent
 	}
 	agentClient := Client{Address: options.Address, Token: registration.AgentToken, HTTP: options.HTTP}
 	if _, err := agentClient.Heartbeat(ctx, HeartbeatInput{Lifecycle: lifecycle, Ready: options.InitialReady, LeaseMS: leaseMS}); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = agentClient.Heartbeat(cleanupCtx, HeartbeatInput{Lifecycle: LifecycleOffline, Ready: false, LeaseMS: leaseMS})
 		return nil, err
 	}
 	heartbeatCtx, cancel := context.WithCancel(ctx)
@@ -114,6 +120,9 @@ func (s *AgentSession) sendHeartbeat(ctx context.Context) (Agent, error) {
 func (s *AgentSession) SetState(ctx context.Context, lifecycle AgentLifecycle, ready bool) (Agent, error) {
 	if err := validateLifecycle(lifecycle); err != nil {
 		return Agent{}, err
+	}
+	if lifecycle == LifecycleOffline && ready {
+		return Agent{}, Errorf(CodeInvalidArgument, "offline agents cannot be ready")
 	}
 	s.beatMu.Lock()
 	defer s.beatMu.Unlock()

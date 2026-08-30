@@ -123,11 +123,39 @@ func writeRunFile(path string, run RunFile) error {
 	return nil
 }
 
+func secureDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return err
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s must be a real directory", path)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0o700); err != nil {
+			return err
+		}
+		info, err = os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm() != 0o700 {
+			return fmt.Errorf("%s must have owner-only permissions", path)
+		}
+	}
+	return nil
+}
+
 func acquireLock(paths DaemonPaths) (*os.File, error) {
-	if err := os.MkdirAll(paths.RuntimeDir, 0o700); err != nil {
+	if err := secureDirectory(paths.RuntimeDir); err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(paths.RuntimeDir, 0o700)
 	create := func() (*os.File, error) {
 		file, err := os.OpenFile(paths.LockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
@@ -187,10 +215,9 @@ func StartDaemon(ctx context.Context, port int, paths *DaemonPaths) (*RunningDae
 	} else {
 		resolved = *paths
 	}
-	if err := os.MkdirAll(resolved.DataDir, 0o700); err != nil {
+	if err := secureDirectory(resolved.DataDir); err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(resolved.DataDir, 0o700)
 	lock, err := acquireLock(resolved)
 	if err != nil {
 		return nil, err

@@ -346,11 +346,11 @@ The following decisions must be resolved before their phase begins:
 | Core runtime | Selected | Go reference daemon |
 | Client SDK | Selected | TypeScript first, more languages as needed |
 | Local database | Selected | SQLite with durable restart recovery |
-| Local transport | Open | Secure across Windows, macOS, and Linux |
+| Local transport | Selected | Loopback HTTP and MCP Streamable HTTP |
 | Remote transport | Open | Resumable, bounded, authenticated, and observable |
 | Remote storage | Open | Same delivery guarantees as local storage |
 | Authentication | Open | Replaceable local, self-hosted, and managed credential providers |
-| Schema format | Open | Language-neutral SDK generation and validation |
+| Schema format | Selected | JSON Schema 2020-12 |
 | Upgrade policy | Open | Safe migrations and explicit compatibility windows |
 | Adapter profiles | Open | Claims tied to conformance tests |
 

@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - run: go test -race -count=1 ./...
+      - run: go vet ./...
+      - run: npm ci
+        working-directory: sdk/typescript
+      - run: npm run typecheck
+        working-directory: sdk/typescript
+      - run: npm run build
+        working-directory: sdk/typescript
+      - run: npm run test:errors
+        working-directory: sdk/typescript
+      - run: go build -o /tmp/october-bus ./cmd/october-bus
+      - run: npm run test:integration
+        working-directory: sdk/typescript
+        env:
+          OCTOBER_BUS_BINARY: /tmp/october-bus
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      OCTOBER_BUS_VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+          cache: true
+      - name: Build release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          OCTOBER_BUS_VERSION="${OCTOBER_BUS_VERSION#v}"
+          OCTOBER_BUS_DIRECTORY="october-bus_${OCTOBER_BUS_VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/${OCTOBER_BUS_DIRECTORY}"
+          OCTOBER_BUS_SUFFIX=""
+          if [[ "${GOOS}" == "windows" ]]; then OCTOBER_BUS_SUFFIX=".exe"; fi
+          go build -trimpath -ldflags "-s -w -X github.com/october-dev/october-bus/bus.Version=${OCTOBER_BUS_VERSION}" -o "dist/${OCTOBER_BUS_DIRECTORY}/october-bus${OCTOBER_BUS_SUFFIX}" ./cmd/october-bus
+          go build -trimpath -ldflags "-s -w -X github.com/october-dev/october-bus/bus.Version=${OCTOBER_BUS_VERSION}" -o "dist/${OCTOBER_BUS_DIRECTORY}/october-bus-conformance${OCTOBER_BUS_SUFFIX}" ./cmd/october-bus-conformance
+          cp LICENSE README.md "dist/${OCTOBER_BUS_DIRECTORY}/"
+          cp -R docs spec "dist/${OCTOBER_BUS_DIRECTORY}/"
+          if [[ "${GOOS}" == "windows" ]]; then
+            (cd dist && zip -qr "${OCTOBER_BUS_DIRECTORY}.zip" "${OCTOBER_BUS_DIRECTORY}")
+          else
+            tar -C dist -czf "dist/${OCTOBER_BUS_DIRECTORY}.tar.gz" "${OCTOBER_BUS_DIRECTORY}"
+          fi
+      - name: Attest Unix archive
+        if: matrix.goos != 'windows'
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Attest Windows archive
+        if: matrix.goos == 'windows'
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/*.zip
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0.24.2
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/october-bus_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: october-bus-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.spdx.json
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: october-bus-*
+          merge-multiple: true
+      - name: Create checksums
+        run: sha256sum dist/* > dist/checksums.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OCTOBER_BUS_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          OCTOBER_BUS_RELEASE_ARGS=("${OCTOBER_BUS_TAG}" dist/* --verify-tag --generate-notes)
+          if [[ "${OCTOBER_BUS_TAG}" == *-* ]]; then OCTOBER_BUS_RELEASE_ARGS+=(--prerelease); fi
+          gh release create "${OCTOBER_BUS_RELEASE_ARGS[@]}"

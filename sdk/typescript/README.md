@@ -8,7 +8,7 @@ The client is in active development and has not reached a stable release. Before
 
 ## Install
 
-When a prerelease is available, install it from the `next` tag:
+Install the current prerelease from the `next` tag:
 
 ```sh
 npm install october-bus@next
@@ -51,4 +51,10 @@ console.log(receipt.messageId, messages)
 
 Scope credentials create agents and handle human escalations. Agent credentials discover peers, exchange messages, coordinate tasks, and ask for human input.
 
+Operations time out after 30 seconds by default. Pass `{ timeoutMs, signal }` as the final method argument to set a shorter deadline or cancel a request.
+
 Generate a new idempotency key for each logical send. Keys remain bound to their original message. Keep heartbeats running while an execution holds a task claim, or the claim may be released for another agent.
+
+`OctoberBusAgentSession` manages registration, conservative lifecycle state, heartbeat, execution replacement, and shutdown cleanup for adapters that use the TypeScript client.
+
+`pollInbox` provides abortable polling with bounded backoff. `withClaimedTask` releases a claim when work or completion fails. Use both with a live agent session so the execution lease remains current while work is claimed.

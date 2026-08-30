@@ -91,6 +91,9 @@ func (r *Runtime) Heartbeat(ctx context.Context, agentToken string, input Heartb
 	if err := validateLifecycle(input.Lifecycle); err != nil {
 		return Agent{}, err
 	}
+	if input.Lifecycle == LifecycleOffline && input.Ready {
+		return Agent{}, Errorf(CodeInvalidArgument, "offline agents cannot be ready")
+	}
 	input.LeaseMS, err = normalizedLease(input.LeaseMS)
 	if err != nil {
 		return Agent{}, err

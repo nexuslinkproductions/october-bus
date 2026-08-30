@@ -304,6 +304,45 @@ func TestExecutionReplacementRetiresPreviousToken(t *testing.T) {
 	}
 }
 
+func TestOfflineHeartbeatCannotClaimReadiness(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	_, err := agents.runtime.Heartbeat(context.Background(), agents.plannerToken, HeartbeatInput{
+		Lifecycle: LifecycleOffline, Ready: true,
+	})
+	requireCode(t, err, CodeInvalidArgument)
+}
+
+func TestShutdownRequiresAdminAuthority(t *testing.T) {
+	ctx := context.Background()
+	runtimeValue, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(runtimeValue, ServerOptions{AdminToken: "admin-token"})
+	address, err := server.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop(context.Background())
+
+	err = (Client{Address: address, Token: "wrong-token"}).Shutdown(ctx)
+	requireCode(t, err, CodeUnauthenticated)
+	select {
+	case <-server.ShutdownRequested():
+		t.Fatal("unauthorized request triggered shutdown")
+	default:
+	}
+	if err := (Client{Address: address, Token: "admin-token"}).Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-server.ShutdownRequested():
+	case <-time.After(time.Second):
+		t.Fatal("authorized shutdown request was not surfaced")
+	}
+}
+
 func TestHumanEscalationIsDurableAndScopeOwned(t *testing.T) {
 	agents := setupAgents(t, ":memory:")
 	defer agents.runtime.Close()
@@ -637,6 +676,49 @@ func TestServerWithoutAdminCredentialCannotCreateScopes(t *testing.T) {
 	requireCode(t, err, CodeUnauthenticated)
 }
 
+func TestHTTPRoutesReturnDeterministicNotFoundAndMethodErrors(t *testing.T) {
+	runtimeValue, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(runtimeValue, ServerOptions{})
+	address, err := server.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop(context.Background())
+
+	for _, test := range []struct {
+		method, path string
+		status       int
+		code         ErrorCode
+		allow        string
+	}{
+		{http.MethodGet, "/v1/scopes", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodPost, "/health", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodGet},
+		{http.MethodGet, "/v1/unknown", http.StatusNotFound, CodeNotFound, ""},
+	} {
+		request, err := http.NewRequest(test.method, address+test.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload struct {
+			Error struct {
+				Code ErrorCode `json:"code"`
+			} `json:"error"`
+		}
+		decodeErr := json.NewDecoder(response.Body).Decode(&payload)
+		response.Body.Close()
+		if decodeErr != nil || response.StatusCode != test.status || payload.Error.Code != test.code || response.Header.Get("Allow") != test.allow {
+			t.Fatalf("unexpected %s %s response: status=%d code=%s allow=%q decode=%v", test.method, test.path, response.StatusCode, payload.Error.Code, response.Header.Get("Allow"), decodeErr)
+		}
+	}
+}
+
 func TestDaemonOwnsOneRunFile(t *testing.T) {
 	root := t.TempDir()
 	paths := DaemonPaths{
@@ -668,6 +750,29 @@ func TestDaemonOwnsOneRunFile(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.RunFile); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("run file was not removed: %v", err)
+	}
+}
+
+func TestDaemonRejectsSymlinkedPrivateDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic-link creation requires additional Windows privileges")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runtimeDir := filepath.Join(root, "run")
+	if err := os.Symlink(target, runtimeDir); err != nil {
+		t.Fatal(err)
+	}
+	paths := DaemonPaths{
+		DataDir: filepath.Join(root, "data"), RuntimeDir: runtimeDir,
+		Database: filepath.Join(root, "data", "bus.db"), RunFile: filepath.Join(runtimeDir, "bus.json"),
+		LockFile: filepath.Join(runtimeDir, "bus.lock"),
+	}
+	if _, err := StartDaemon(context.Background(), 0, &paths); err == nil {
+		t.Fatal("daemon accepted a symlinked runtime directory")
 	}
 }
 

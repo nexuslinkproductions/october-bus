@@ -10,7 +10,7 @@ export type AgentLifecycle = 'starting' | 'ready' | 'working' | 'idle' | 'needs_
 export type MessageMode = 'notify' | 'request' | 'response'
 export type DeliveryState = 'queued' | 'reserved' | 'delivered' | 'acknowledged' | 'expired'
 export type TaskStatus = 'open' | 'claimed' | 'done'
-export type EscalationStatus = 'pending' | 'resolved' | 'cancelled'
+export type EscalationStatus = 'pending' | 'resolved'
 
 export interface AgentCapability {
   name: string
@@ -155,6 +155,7 @@ export interface BusRunFile {
 export interface BusHealth {
   name: 'october-bus'
   protocolVersion: string
+  runtimeVersion: string
   status: 'ready'
   startedAt: string
 }

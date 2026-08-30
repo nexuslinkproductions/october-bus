@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/october-dev/october-bus/bus"
 )
@@ -25,6 +27,33 @@ func TestAgentRunHelper(t *testing.T) {
 	}
 	if os.Getenv("OCTOBER_BUS_SCOPE_TOKEN") != "" {
 		os.Exit(3)
+	}
+}
+
+func TestStopCommandUsesProtectedLocalEndpoint(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OCTOBER_BUS_DATA_DIR", filepath.Join(root, "data"))
+	t.Setenv("OCTOBER_BUS_RUNTIME_DIR", filepath.Join(root, "run"))
+	daemon, err := bus.StartDaemon(context.Background(), 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan error, 1)
+	go func() {
+		select {
+		case <-daemon.Server.ShutdownRequested():
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			stopped <- daemon.Stop(ctx)
+		case <-time.After(time.Second):
+			stopped <- context.DeadlineExceeded
+		}
+	}()
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
 	}
 }
 

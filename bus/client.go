@@ -94,6 +94,11 @@ func (c Client) CreateScope(ctx context.Context, input CreateScopeInput) (Create
 	return request[CreateScopeResult](ctx, c, http.MethodPost, "/v1/scopes", input)
 }
 
+func (c Client) Shutdown(ctx context.Context) error {
+	_, err := request[map[string]bool](ctx, c, http.MethodPost, "/v1/admin/shutdown", map[string]any{})
+	return err
+}
+
 func (c Client) RegisterAgent(ctx context.Context, input RegisterAgentInput) (RegisterAgentResult, error) {
 	return request[RegisterAgentResult](ctx, c, http.MethodPost, "/v1/agents", input)
 }
