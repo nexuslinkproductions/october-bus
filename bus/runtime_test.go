@@ -657,6 +657,24 @@ func TestHTTPAndMCPUseTheSameAgentAuthority(t *testing.T) {
 	if err != nil || result.IsError {
 		t.Fatalf("MCP list_peers failed: %#v, %v", result, err)
 	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("MCP list_peers structured content must be an object: %#v", result.StructuredContent)
+	}
+	if _, ok := structured["peers"].([]any); !ok {
+		t.Fatalf("MCP list_peers must return a peers array: %#v", result.StructuredContent)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "list_tasks", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("MCP list_tasks failed: %#v, %v", result, err)
+	}
+	structured, ok = result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("MCP list_tasks structured content must be an object: %#v", result.StructuredContent)
+	}
+	if _, ok := structured["tasks"].([]any); !ok {
+		t.Fatalf("MCP list_tasks must return a tasks array: %#v", result.StructuredContent)
+	}
 }
 
 func TestServerWithoutAdminCredentialCannotCreateScopes(t *testing.T) {

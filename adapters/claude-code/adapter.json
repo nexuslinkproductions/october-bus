@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "claude-code-mcp",
+  "adapterVersion": "0.1.0",
   "harnessFamily": "Claude Code",
   "status": "experimental",
   "protocolVersions": ["0.1"],

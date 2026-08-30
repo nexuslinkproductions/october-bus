@@ -564,13 +564,13 @@ func (s *Server) newMCPServer(token string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "list_peers", Description: "List linked agents and their capabilities."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, any, error) {
 			peers, err := s.runtime.ListPeers(ctx, token)
-			return nil, peers, err
+			return nil, map[string]any{"peers": peers}, err
 		})
 	type messagePeerInput struct {
 		Peer           string        `json:"peer" jsonschema:"exact agent id preferred, or unique exact display name"`
 		Message        string        `json:"message" jsonschema:"message body"`
-		Mode           MessageMode   `json:"mode,omitempty"`
-		ResponseTo     string        `json:"responseTo,omitempty"`
+		Mode           MessageMode   `json:"mode,omitempty" jsonschema:"notify, request, or response; use response when responseTo is set"`
+		ResponseTo     string        `json:"responseTo,omitempty" jsonschema:"original request message id; requires mode response"`
 		IdempotencyKey string        `json:"idempotencyKey,omitempty"`
 		ExpiresInMS    int64         `json:"expiresInMs,omitempty"`
 		Context        []ContextItem `json:"context,omitempty"`
@@ -640,7 +640,7 @@ func (s *Server) newMCPServer(token string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "list_tasks", Description: "List shared tasks and dependency state."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, any, error) {
 			result, err := s.runtime.ListTasks(ctx, token)
-			return nil, result, err
+			return nil, map[string]any{"tasks": result}, err
 		})
 	mcp.AddTool(server, &mcp.Tool{Name: "ask_user", Description: "Request human input or permission."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input AskHumanInput) (*mcp.CallToolResult, any, error) {

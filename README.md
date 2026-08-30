@@ -31,7 +31,7 @@ People increasingly run several coding agents at once. The human often becomes t
 Agents should be able to coordinate directly while keeping their own tools, permissions, and context. October Bus provides the shared language for that coordination. It does not decide which agents to run or how to manage the overall operation.
 
 > [!NOTE]
-> **Project status:** The first standalone runtime is now in active development. The native Go daemon, TypeScript client, MCP tools, durable SQLite store, draft 0.1 specification, and local-runtime conformance profile are runnable. Early Claude Code and Codex configurations are included. Protocol and package interfaces may change before the first stable release, and no harness integration is conformance-verified yet.
+> **Project status:** The first standalone runtime is now in active development. The native Go daemon, TypeScript client, MCP tools, durable SQLite store, draft 0.1 specification, and local-runtime conformance profile are runnable. Early Claude Code, Codex, Cursor, and OpenCode configurations are included. Protocol and package interfaces may change before the first stable release, and no harness integration is conformance-verified yet.
 
 ## What agents can do
 
@@ -193,9 +193,9 @@ If a harness cannot safely wake itself or prove that it is idle, it can implemen
 
 ## Compatibility
 
-Early Claude Code and Codex configurations live in `adapters/`. They are not yet conformance-verified and are not compatibility claims. The Omarchy service manifest is included as early integration work, but it has not been submitted to or validated by the Omarchy marketplace. The [compatibility registry](compatibility/README.md) starts empty and will list only adapters with current passing evidence.
+Early Claude Code, Codex, Cursor, and OpenCode configurations live in `adapters/`. They are not yet conformance-verified and are not compatibility claims. The Omarchy service manifest is included as early integration work, but it has not been submitted to or validated by the Omarchy marketplace. The [compatibility registry](compatibility/README.md) starts empty and will list only adapters with current passing evidence.
 
-The local-runtime conformance runner uses only the public HTTP client. Against a test daemon, run:
+The local-runtime conformance runner uses only the public HTTP and MCP interfaces. Against a test daemon, run:
 
 ```bash
 go run ./cmd/october-bus-conformance
@@ -203,7 +203,7 @@ go run ./cmd/october-bus-conformance
 
 Use `--format text` for concise terminal output. JSON is the default and failed runs exit nonzero with the failed check recorded.
 
-It covers authority, registration, discovery, durable delivery, acknowledgements, idempotency, replies, expiry, task dependencies, release and recovery, escalation, isolation, and lifecycle cleanup. Future adapter profiles will also cover:
+It covers authority, registration, discovery, durable delivery, acknowledgements, idempotency, replies, expiry, task dependencies, release and recovery, escalation, isolation, the MCP tool surface, and lifecycle cleanup. Future adapter profiles will also cover:
 
 - identity, registration, and execution replacement;
 - discovery, capabilities, presence, and reachability;

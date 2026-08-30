@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "codex-mcp",
+  "id": "cursor-mcp",
   "adapterVersion": "0.1.0",
-  "harnessFamily": "Codex",
+  "harnessFamily": "Cursor",
   "status": "experimental",
   "protocolVersions": ["0.1"],
   "transport": "mcp",

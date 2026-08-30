@@ -2,6 +2,8 @@
 
 This directory contains host-specific configuration for connecting coding harnesses to October Bus.
 
+Early configurations are included for Claude Code, Codex, Cursor, and OpenCode. Each adapter directory contains its host configuration, manifest, and setup instructions.
+
 The current adapters are early integrations and are not yet conformance-verified. They use the shared `october-bus agent run` command for registration, credentials, heartbeat, and cleanup.
 
 Each harness receives its own agent token. Scope credentials stay outside the harness process.

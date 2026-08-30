@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "codex-mcp",
+  "id": "opencode-mcp",
   "adapterVersion": "0.1.0",
-  "harnessFamily": "Codex",
+  "harnessFamily": "OpenCode",
   "status": "experimental",
   "protocolVersions": ["0.1"],
   "transport": "mcp",

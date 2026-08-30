@@ -7,3 +7,24 @@ The registry starts empty. Experimental adapter manifests do not count as compat
 Each evidence record must validate against [`compatibility-evidence.schema.json`](../spec/0.1/schemas/compatibility-evidence.schema.json) and include the harness version, adapter version, Bus versions, platform, result digest, verification time, repository commit, limitations, and verification mode. The registry itself is validated against [`compatibility-registry.schema.json`](../spec/0.1/schemas/compatibility-registry.schema.json).
 
 `registry.json` contains paths to current passing evidence. Failed or stale records may remain for history but must be removed from the registry.
+
+Use the [harness verification runbook](RUNBOOK.md) to produce a reproducible evidence record.
+
+## Support levels
+
+| Level | Meaning |
+| --- | --- |
+| Experimental | Configuration exists, but the integration has not passed the required profile. |
+| Tier 1 | Manual setup has passed discovery and durable messaging checks. |
+| Tier 2 | A packaged adapter has passed the complete required profile. |
+| Tier 3 | Native integration adds verified host lifecycle or wake behavior. |
+
+Only Tier 2 and Tier 3 integrations may be named as October Bus compatible. Optional capabilities and platform coverage are stated separately.
+
+## Evidence rules
+
+- One harness family counts once. Operating systems, editor modes, and unchanged forks do not create extra entries.
+- Evidence expires after 90 days, when its harness integration surface changes, or when its protocol profile is replaced.
+- A passing record must identify the exact harness, adapter, runtime, protocol, platform, repository commit, and limitations.
+- Manual and assisted runs must include reproducible instructions. Automated runs should include a public workflow or attestation.
+- An integration is removed from the verified registry when current evidence no longer passes.

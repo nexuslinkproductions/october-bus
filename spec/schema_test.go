@@ -111,16 +111,21 @@ func TestProtocolSchemas(t *testing.T) {
 
 func TestAdapterManifestsMatchSchema(t *testing.T) {
 	schema := resolvedSchema(t, filepath.Join("0.1", "schemas", "adapter-manifest.schema.json"), "")
-	for _, path := range []string{
-		filepath.Join("..", "adapters", "codex", "adapter.json"),
-		filepath.Join("..", "adapters", "claude-code", "adapter.json"),
-	} {
+	paths, err := filepath.Glob(filepath.Join("..", "adapters", "*", "adapter.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no adapter manifests found")
+	}
+	for _, path := range paths {
 		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
 			requireValid(t, schema, readJSON(t, path))
 		})
 	}
 	requireInvalid(t, schema, map[string]any{
 		"schemaVersion": float64(1), "id": "unproven", "harnessFamily": "Unknown",
+		"adapterVersion": "0.1.0",
 		"status": "verified", "protocolVersions": []any{"0.1"}, "transport": "mcp",
 		"delivery": "pull", "lifecycleEvidence": "process", "capabilities": []any{},
 		"testedVersions": []any{}, "platforms": []any{"linux"}, "maintainer": "October",

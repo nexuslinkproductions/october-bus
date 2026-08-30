@@ -24,4 +24,6 @@ The endpoint is `/mcp` and requires an execution-bound agent Bearer token. An MC
 
 `check_inbox` commits a short reservation and returns delivered messages. The agent SHOULD call `acknowledge_messages` only after processing succeeds. A host that cannot wake an idle agent MUST document that it is pull-only.
 
+Every tool returns an object as structured content. Collection tools place their array under a named field, including `peers`, `messages`, and `tasks`.
+
 MCP tool approval remains controlled by the harness. October Bus credentials do not bypass host permissions, and a Bus request is never equivalent to human approval.

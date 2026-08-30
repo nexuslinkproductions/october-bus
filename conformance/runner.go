@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/october-dev/october-bus/bus"
 )
 
@@ -55,7 +57,32 @@ func requireCode(err error, code bus.ErrorCode) error {
 	return nil
 }
 
-// Run exercises the local runtime profile only through the public HTTP client.
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (transport bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	clone := request.Clone(request.Context())
+	clone.Header.Set("Authorization", "Bearer "+transport.token)
+	return transport.base.RoundTrip(clone)
+}
+
+func requireStructuredArray(result *mcp.CallToolResult, field string) error {
+	if result == nil || result.IsError {
+		return fmt.Errorf("tool returned an error: %#v", result)
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		return fmt.Errorf("structured content must be an object: %#v", result.StructuredContent)
+	}
+	if _, ok := structured[field].([]any); !ok {
+		return fmt.Errorf("structured content must contain %s array: %#v", field, result.StructuredContent)
+	}
+	return nil
+}
+
+// Run exercises the local runtime profile through the public HTTP and MCP interfaces.
 func Run(ctx context.Context, options Options) (result Result, runErr error) {
 	result = Result{
 		Profile: ProfileLocalRuntime, StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -327,6 +354,42 @@ func Run(ctx context.Context, options Options) (result Result, runErr error) {
 		intruder := bus.Client{Address: options.Address, Token: intruderRegistration.AgentToken}
 		_, err = intruder.SendMessage(ctx, bus.SendMessageInput{To: "planner", Body: "Cross scope"})
 		return requireCode(err, bus.CodePermissionDenied)
+	}); err != nil {
+		return result, err
+	}
+
+	if err := record.check("mcp-tool-surface", func() error {
+		httpClient := &http.Client{
+			Transport: bearerTransport{token: reviewer.Token, base: http.DefaultTransport},
+			Timeout:   10 * time.Second,
+		}
+		client := mcp.NewClient(&mcp.Implementation{Name: "october-bus-conformance", Version: bus.Version}, nil)
+		session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+			Endpoint: options.Address + "/mcp", HTTPClient: httpClient, DisableStandaloneSSE: true,
+		}, nil)
+		if err != nil {
+			return err
+		}
+		defer session.Close()
+		tools, err := session.ListTools(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if len(tools.Tools) != 11 {
+			return fmt.Errorf("unexpected MCP tool count: %d", len(tools.Tools))
+		}
+		peers, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "list_peers", Arguments: map[string]any{}})
+		if err != nil {
+			return err
+		}
+		if err := requireStructuredArray(peers, "peers"); err != nil {
+			return err
+		}
+		tasks, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "list_tasks", Arguments: map[string]any{}})
+		if err != nil {
+			return err
+		}
+		return requireStructuredArray(tasks, "tasks")
 	}); err != nil {
 		return result, err
 	}
