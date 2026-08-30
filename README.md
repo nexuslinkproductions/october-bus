@@ -31,14 +31,14 @@ People increasingly run several coding agents at once. The human often becomes t
 Agents should be able to coordinate directly while keeping their own tools, permissions, and context. October Bus provides the shared language for that coordination. It does not decide which agents to run or how to manage the overall operation.
 
 > [!NOTE]
-> **Project status:** This repository currently contains the October Bus project direction. The standalone runtime, SDKs, adapters, examples, and conformance suite will be added soon. Commands and APIs marked as previews are not runnable from this repository yet.
+> **Project status:** The first standalone runtime is now in active development. The native Go daemon, TypeScript client, MCP tools, durable SQLite store, and two-agent demo are runnable. Protocol and package interfaces may change before the first stable release. Harness adapters and the conformance suite have not landed yet.
 
 ## What agents can do
 
 October Bus lets an agent:
 
 - discover available peers and their declared capabilities;
-- send durable messages and receive correlated replies;
+- send durable messages and receive replies;
 - share only the context needed for a task;
 - delegate work without sharing an entire session;
 - create, claim, block, and complete shared tasks;
@@ -60,7 +60,7 @@ Claude Code  -> request: Review the retry path in checkout.ts
 Codex        -> claims the review task
 Codex        -> response: The retry drops the idempotency key
 
-Claude Code  -> receives the correlated reply while still working
+Claude Code  -> receives the reply while still working
 ```
 
 Codex receives the request and the bounded context needed for the review. It does not need Claude Code's full transcript.
@@ -90,35 +90,50 @@ MCP provides useful tool, resource, and context primitives. October Bus uses tho
 
 MCP can provide the integration surface. October Bus defines how collaborating agents behave on top of those primitives. Harnesses may also use native adapters when that is a better fit.
 
-## Quickstart preview
+## Quickstart
 
-The first standalone release will make this flow runnable in a few minutes:
+Building October Bus from source requires Go 1.25 or newer.
 
 ```bash
 git clone https://github.com/october-dev/october-bus.git
 cd october-bus
-npm install
-npm run build
-npm run example:two-agents
+go run ./cmd/october-bus demo
 ```
 
-The example will start two isolated agents. One discovers the other, sends a request, delegates a task, and receives a correlated reply.
+The demo starts an isolated local Bus and two example agents. One discovers the other, sends a durable request with bounded context, delegates a task, and receives a reply.
 
 ```text
 planner  -> list_peers()
-bus      -> builder [available]
+bus      -> builder [ready]
 
-planner  -> message_peer(builder, intent=request, "Review the checkout flow")
+planner  -> message_peer(builder, mode=request, "Review the checkout flow")
 bus      -> accepted as msg_01
 
-builder  -> claim_task("Review checkout flow")
-builder  -> message_peer(planner, intent=response, responseTo=msg_01,
+planner  -> add_task("Review checkout flow")
+bus      -> created as task_01
+
+builder  -> claim_task(task_01)
+builder  -> message_peer(planner, mode=response, responseTo=msg_01,
                          "The retry path drops the idempotency key")
 
 planner  -> reply received
 ```
 
-No October Desktop installation will be required for the local example.
+No October Desktop installation is required.
+
+To start a persistent local daemon from source:
+
+```bash
+go run ./cmd/october-bus start
+```
+
+In another terminal, create a collaboration scope:
+
+```bash
+go run ./cmd/october-bus scope create my-project
+```
+
+The command returns a scope token. A harness uses that token once to register an execution and receives a separate, execution-bound agent token. The TypeScript client lives in `sdk/typescript`. MCP clients connect to the daemon's `/mcp` endpoint with the agent token as a Bearer credential.
 
 ## Protocol
 
@@ -129,19 +144,21 @@ No October Desktop installation will be required for the local example.
 | Presence | Existence, readiness, reachability, and lifecycle remain separate facts |
 | Messaging | Durable notifications, requests, responses, inboxes, and receipts |
 | Delegation | One agent can request bounded work from another agent |
-| Shared tasks | Agents can create, claim, complete, and depend on tasks |
+| Shared tasks | Agents can create, claim, release, complete, and depend on tasks |
 | Context | Agents exchange explicit, bounded context instead of a global transcript |
 | Human escalation | Agents can request input or permission without inventing authority |
 
 ### Delivery and replies
 
-A send is accepted only after the local runtime has persisted it. Requests open one reply obligation. Responses name the request they complete.
+A send is accepted only after the local runtime has persisted it. A retry with the same idempotency key returns the original receipt. Keys remain bound to the original message for that sender, so clients should generate a new UUID for each logical send. Reusing a key with different content is rejected.
 
-Delivery state is explicit. A message may be queued, reserved by one delivery attempt, delivered, acknowledged, expired, or uncertain. The Bus prefers an honest uncertain result over silently delivering the same request twice.
+Requests open one reply obligation. Responses name the delivered request they complete. Expiry stops delivery attempts. A request delivered before its deadline may still receive one reply, and its receipt shows both the expiry and the late reply.
+
+Delivery state is explicit. A message may be queued, reserved by one delivery attempt, delivered, acknowledged, or expired.
 
 ### Identity and lifecycle
 
-A logical agent identity is not enough to act. The runtime also checks the current execution, adapter attachment, readiness, reachability, and lifecycle. Replacing or ending an execution retires its live authority.
+A logical agent identity is not enough to act. The runtime checks the current execution token and lease. Re-registering an agent replaces its execution and retires the previous token. Task claims belong to that execution. A harness must heartbeat while it holds a claim, or the Bus may release the claim for another agent. Adapters remain responsible for reporting only readiness and lifecycle states they can prove.
 
 ## Integrating a new harness
 
@@ -152,7 +169,7 @@ A harness can support October Bus without using October Desktop.
 3. **Declare capabilities.** State how the harness receives work, reports readiness, and completes requests.
 4. **Expose discovery.** Let the agent list peers and inspect their capabilities.
 5. **Support messages.** Send notifications, requests, responses, and delivery acknowledgements.
-6. **Support shared tasks.** Create, claim, complete, and inspect dependencies.
+6. **Support shared tasks.** Create, claim, release, complete, and inspect dependencies.
 7. **Handle human escalation.** Surface requests for input or permission to the owning user.
 8. **Report lifecycle.** Publish only states the harness can prove, such as working, idle, or needs input.
 9. **Clean up.** Retire credentials, reservations, and execution state when the run ends.
@@ -164,15 +181,13 @@ If a harness cannot safely wake itself or prove that it is idle, it can implemen
 
 ## Compatibility
 
-The standalone repository does not ship harness adapters yet. The compatibility matrix will list only adapters included here and verified by the conformance suite.
+The standalone repository does not ship harness adapters yet. The Omarchy service manifest is included as early integration work, but it has not been submitted to or validated by the Omarchy marketplace. The compatibility matrix will list only adapters included here and verified by the conformance suite.
 
-October Desktop already informed the protocol design across a range of harnesses. That internal support should not be read as a claim that each adapter has already been extracted, packaged, or tested independently.
-
-The planned conformance suite will cover:
+The current runtime tests cover execution replacement, durable restart recovery, idempotent retries, message expiry, redelivery and acknowledgement, reply linking, recoverable task claims, task dependencies, human escalation, HTTP clients, and MCP authority. The planned conformance suite will also cover:
 
 - identity, registration, and execution replacement;
 - discovery, capabilities, presence, and reachability;
-- durable messaging, receipts, retries, expiry, and reply correlation;
+- durable messaging, receipts, retries, expiry, and reply linking;
 - task claiming, completion, and dependencies;
 - bounded context exchange;
 - human escalation and permission boundaries;
@@ -187,11 +202,11 @@ October Bus is local-first. The reference runtime is designed to listen on loopb
 - **Authority belongs to one execution.** Live credentials are short-lived and retired when the process or session changes.
 - **Peer requests cannot expand scope.** Receiving a message does not approve destructive work or bypass the harness's permission system.
 - **Context is explicit and bounded.** An agent sees only context shared for the collaboration. Resource descriptions do not grant access to the resource.
-- **Delivery is observable.** Acceptance, delivery, acknowledgement, expiry, and uncertainty are different states.
+- **Delivery is observable.** Acceptance, delivery, acknowledgement, and expiry are different states.
 - **Human boundaries remain intact.** An agent can ask for input or permission, but it cannot answer on the user's behalf.
 - **Remote transport needs separate trust.** A remote peer identity alone is not permission to control a process or device.
 
-These are protocol and implementation requirements. The conformance suite will verify the guarantees provided by the standalone implementation when it lands.
+These are protocol and implementation requirements. The current v1 tests cover the implemented local guarantees. The conformance suite will define the stable compatibility profiles.
 
 ## What October Bus is not
 
@@ -255,12 +270,15 @@ October Cloud, managed cross-device permissions, and the commercial multiplayer 
 
 ## Roadmap
 
-- Publish the standalone protocol and local reference implementation.
+- Harden and version the standalone protocol and local reference implementation.
 - Ship the first SDK, examples, and independently usable harness adapters.
 - Publish the conformance suite and compatibility profiles.
+- Validate and publish the headless Omarchy service integration.
 - Add SDKs for more languages and runtimes.
 - Define pluggable transport interfaces without coupling the protocol to October Cloud.
 - Stabilize a versioned interoperability specification.
+
+The detailed implementation plan lives in [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 

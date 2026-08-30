@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.october-dev.october-bus",
+  "name": "October Bus",
+  "version": "0.1.0",
+  "author": "October",
+  "license": "Apache-2.0",
+  "description": "Run October Bus as the local coordination layer for AI agents on Omarchy.",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "integrations/omarchy/Service.qml"
+  }
+}

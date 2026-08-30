@@ -1,0 +1,242 @@
+package bus
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"os/user"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+type DaemonPaths struct {
+	DataDir    string
+	RuntimeDir string
+	Database   string
+	RunFile    string
+	LockFile   string
+}
+
+func DefaultDaemonPaths() (DaemonPaths, error) {
+	dataRoot := os.Getenv("OCTOBER_BUS_DATA_DIR")
+	if dataRoot == "" {
+		if runtime.GOOS == "windows" {
+			dataRoot = os.Getenv("LOCALAPPDATA")
+			if dataRoot == "" {
+				var err error
+				dataRoot, err = os.UserConfigDir()
+				if err != nil {
+					return DaemonPaths{}, err
+				}
+			}
+			dataRoot = filepath.Join(dataRoot, "October Bus")
+		} else {
+			dataRoot = os.Getenv("XDG_DATA_HOME")
+			if dataRoot == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return DaemonPaths{}, err
+				}
+				dataRoot = filepath.Join(home, ".local", "share")
+			}
+			dataRoot = filepath.Join(dataRoot, "october-bus")
+		}
+	}
+	runtimeRoot := os.Getenv("OCTOBER_BUS_RUNTIME_DIR")
+	if runtimeRoot == "" {
+		if runtime.GOOS != "windows" && os.Getenv("XDG_RUNTIME_DIR") != "" {
+			runtimeRoot = filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "october-bus")
+		} else {
+			name := "user"
+			if current, err := user.Current(); err == nil {
+				name = current.Uid
+			}
+			name = strings.NewReplacer("/", "_", `\`, "_", ":", "_").Replace(name)
+			runtimeRoot = filepath.Join(os.TempDir(), "october-bus-"+name)
+		}
+	}
+	return DaemonPaths{
+		DataDir: dataRoot, RuntimeDir: runtimeRoot,
+		Database: filepath.Join(dataRoot, "bus.db"),
+		RunFile:  filepath.Join(runtimeRoot, "bus.json"),
+		LockFile: filepath.Join(runtimeRoot, "bus.lock"),
+	}, nil
+}
+
+func ReadRunFile(path string) (RunFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return RunFile{}, err
+	}
+	var run RunFile
+	if err := json.Unmarshal(data, &run); err != nil {
+		return RunFile{}, err
+	}
+	parsed, err := url.Parse(run.Address)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || run.ProtocolVersion != ProtocolVersion || run.PID < 1 || run.StartedAt == "" || len(run.AdminToken) != 43 {
+		return RunFile{}, errors.New("October Bus run file is invalid")
+	}
+	return run, nil
+}
+
+func writeRunFile(path string, run RunFile) error {
+	data, err := json.MarshalIndent(run, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	temporary := path + "." + strconv.Itoa(os.Getpid()) + ".tmp"
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	clean := func() { _ = os.Remove(temporary) }
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		clean()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		clean()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		clean()
+		return err
+	}
+	if err := os.Chmod(temporary, 0o600); err != nil {
+		clean()
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		clean()
+		return err
+	}
+	return nil
+}
+
+func acquireLock(paths DaemonPaths) (*os.File, error) {
+	if err := os.MkdirAll(paths.RuntimeDir, 0o700); err != nil {
+		return nil, err
+	}
+	_ = os.Chmod(paths.RuntimeDir, 0o700)
+	create := func() (*os.File, error) {
+		file, err := os.OpenFile(paths.LockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
+			file.Close()
+			_ = os.Remove(paths.LockFile)
+			return nil, err
+		}
+		if err := file.Sync(); err != nil {
+			file.Close()
+			_ = os.Remove(paths.LockFile)
+			return nil, err
+		}
+		return file, nil
+	}
+	file, err := create()
+	if err == nil {
+		return file, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return nil, err
+	}
+	if run, readErr := ReadRunFile(paths.RunFile); readErr == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if health, healthErr := (Client{Address: run.Address}).Health(ctx); healthErr == nil && health.Status == "ready" {
+			return nil, errors.New("October Bus is already running")
+		}
+	}
+	info, statErr := os.Stat(paths.LockFile)
+	if statErr == nil && time.Since(info.ModTime()) < 30*time.Second {
+		return nil, errors.New("October Bus is already starting")
+	}
+	_ = os.Remove(paths.LockFile)
+	_ = os.Remove(paths.RunFile)
+	return create()
+}
+
+type RunningDaemon struct {
+	Server  *Server
+	RunFile RunFile
+	Paths   DaemonPaths
+	lock    *os.File
+	once    sync.Once
+}
+
+func StartDaemon(ctx context.Context, port int, paths *DaemonPaths) (*RunningDaemon, error) {
+	resolved := DaemonPaths{}
+	var err error
+	if paths == nil {
+		resolved, err = DefaultDaemonPaths()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		resolved = *paths
+	}
+	if err := os.MkdirAll(resolved.DataDir, 0o700); err != nil {
+		return nil, err
+	}
+	_ = os.Chmod(resolved.DataDir, 0o700)
+	lock, err := acquireLock(resolved)
+	if err != nil {
+		return nil, err
+	}
+	cleanup := func() {
+		_ = lock.Close()
+		_ = os.Remove(resolved.RunFile)
+		_ = os.Remove(resolved.LockFile)
+	}
+	runtimeValue, err := Open(resolved.Database)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	adminToken, err := randomValue(32)
+	if err != nil {
+		runtimeValue.Close()
+		cleanup()
+		return nil, err
+	}
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	server := NewServer(runtimeValue, ServerOptions{Port: port, AdminToken: adminToken, StartedAt: startedAt})
+	address, err := server.Start()
+	if err != nil {
+		runtimeValue.Close()
+		cleanup()
+		return nil, err
+	}
+	run := RunFile{ProtocolVersion: ProtocolVersion, Address: address, PID: os.Getpid(), StartedAt: startedAt, AdminToken: adminToken}
+	if err := writeRunFile(resolved.RunFile, run); err != nil {
+		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_ = server.Stop(stopCtx)
+		cleanup()
+		return nil, err
+	}
+	return &RunningDaemon{Server: server, RunFile: run, Paths: resolved, lock: lock}, nil
+}
+
+func (d *RunningDaemon) Stop(ctx context.Context) error {
+	var result error
+	d.once.Do(func() {
+		result = d.Server.Stop(ctx)
+		_ = d.lock.Close()
+		_ = os.Remove(d.Paths.RunFile)
+		_ = os.Remove(d.Paths.LockFile)
+	})
+	return result
+}

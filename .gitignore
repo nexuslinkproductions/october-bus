@@ -1,0 +1,10 @@
+/_audit/
+node_modules/
+dist/
+bin/
+coverage/
+*.log
+*.test
+/october-bus
+/october-bus.exe
+.DS_Store

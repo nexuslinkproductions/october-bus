@@ -1,0 +1,160 @@
+export const OCTOBER_BUS_PROTOCOL_VERSION = '0.1' as const
+
+export type ScopeId = string
+export type AgentId = string
+export type ExecutionId = string
+export type MessageId = string
+export type TaskId = string
+
+export type AgentLifecycle = 'starting' | 'ready' | 'working' | 'idle' | 'needs_input' | 'offline'
+export type MessageMode = 'notify' | 'request' | 'response'
+export type DeliveryState = 'queued' | 'reserved' | 'delivered' | 'acknowledged' | 'expired'
+export type TaskStatus = 'open' | 'claimed' | 'done'
+export type EscalationStatus = 'pending' | 'resolved' | 'cancelled'
+
+export interface AgentCapability {
+  name: string
+  description?: string
+}
+
+export interface AgentIdentity {
+  scopeId: ScopeId
+  agentId: AgentId
+  executionId: ExecutionId
+}
+
+export interface Agent {
+  id: AgentId
+  displayName: string
+  capabilities: AgentCapability[]
+  lifecycle: AgentLifecycle
+  ready: boolean
+  reachable: boolean
+  executionId: ExecutionId
+  registeredAt: string
+  updatedAt: string
+}
+
+export interface ContextItem {
+  kind: 'text' | 'file' | 'url' | 'reference'
+  title: string
+  text?: string
+  uri?: string
+  mediaType?: string
+}
+
+export interface BusMessage {
+  id: MessageId
+  scopeId: ScopeId
+  from: AgentId
+  to: AgentId
+  mode: MessageMode
+  body: string
+  context: ContextItem[]
+  responseTo?: MessageId
+  state: DeliveryState
+  createdAt: string
+  expiresAt?: string
+  deliveredAt?: string
+  acknowledgedAt?: string
+  repliedAt?: string
+  responseMessageId?: MessageId
+}
+
+export interface DeliveryReceipt {
+  messageId: MessageId
+  state: DeliveryState
+  acceptedAt: string
+  deliveredAt?: string
+  acknowledgedAt?: string
+  repliedAt?: string
+  responseMessageId?: MessageId
+}
+
+export interface InboxReservation {
+  id: string
+  expiresAt: string
+  messages: BusMessage[]
+}
+
+export interface BusTask {
+  id: TaskId
+  scopeId: ScopeId
+  description: string
+  createdBy: AgentId
+  claimedBy?: AgentId
+  status: TaskStatus
+  dependencies: TaskId[]
+  note?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface HumanEscalation {
+  id: string
+  scopeId: ScopeId
+  agentId: AgentId
+  question: string
+  options: string[]
+  status: EscalationStatus
+  answer?: string
+  createdAt: string
+  resolvedAt?: string
+}
+
+export interface CreateScopeInput {
+  id?: ScopeId
+}
+
+export interface CreateScopeResult {
+  scopeId: ScopeId
+  scopeToken: string
+}
+
+export interface RegisterAgentInput {
+  id?: AgentId
+  displayName: string
+  capabilities?: AgentCapability[]
+  connectTo?: AgentId[]
+  leaseMs?: number
+}
+
+export interface RegisterAgentResult extends AgentIdentity {
+  agentToken: string
+  leaseExpiresAt: string
+}
+
+export interface SendMessageInput {
+  to: AgentId
+  body: string
+  mode?: MessageMode
+  responseTo?: MessageId
+  idempotencyKey?: string
+  expiresInMs?: number
+  context?: ContextItem[]
+}
+
+export interface AddTaskInput {
+  description: string
+  dependencies?: TaskId[]
+}
+
+export interface AskHumanInput {
+  question: string
+  options?: string[]
+}
+
+export interface BusRunFile {
+  protocolVersion: string
+  address: string
+  pid: number
+  startedAt: string
+  adminToken: string
+}
+
+export interface BusHealth {
+  name: 'october-bus'
+  protocolVersion: string
+  status: 'ready'
+  startedAt: string
+}

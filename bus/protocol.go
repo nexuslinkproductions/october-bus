@@ -1,0 +1,198 @@
+package bus
+
+const ProtocolVersion = "0.1"
+
+var Version = "dev"
+
+type AgentLifecycle string
+
+const (
+	LifecycleStarting   AgentLifecycle = "starting"
+	LifecycleReady      AgentLifecycle = "ready"
+	LifecycleWorking    AgentLifecycle = "working"
+	LifecycleIdle       AgentLifecycle = "idle"
+	LifecycleNeedsInput AgentLifecycle = "needs_input"
+	LifecycleOffline    AgentLifecycle = "offline"
+)
+
+type MessageMode string
+
+const (
+	MessageNotify   MessageMode = "notify"
+	MessageRequest  MessageMode = "request"
+	MessageResponse MessageMode = "response"
+)
+
+type DeliveryState string
+
+const (
+	DeliveryQueued       DeliveryState = "queued"
+	DeliveryReserved     DeliveryState = "reserved"
+	DeliveryDelivered    DeliveryState = "delivered"
+	DeliveryAcknowledged DeliveryState = "acknowledged"
+	DeliveryExpired      DeliveryState = "expired"
+)
+
+type AgentCapability struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type AgentIdentity struct {
+	ScopeID     string `json:"scopeId"`
+	AgentID     string `json:"agentId"`
+	ExecutionID string `json:"executionId"`
+}
+
+type Agent struct {
+	ID           string            `json:"id"`
+	DisplayName  string            `json:"displayName"`
+	Capabilities []AgentCapability `json:"capabilities"`
+	Lifecycle    AgentLifecycle    `json:"lifecycle"`
+	Ready        bool              `json:"ready"`
+	Reachable    bool              `json:"reachable"`
+	ExecutionID  string            `json:"executionId"`
+	RegisteredAt string            `json:"registeredAt"`
+	UpdatedAt    string            `json:"updatedAt"`
+}
+
+type ContextItem struct {
+	Kind      string `json:"kind"`
+	Title     string `json:"title"`
+	Text      string `json:"text,omitempty"`
+	URI       string `json:"uri,omitempty"`
+	MediaType string `json:"mediaType,omitempty"`
+}
+
+type Message struct {
+	ID                string        `json:"id"`
+	ScopeID           string        `json:"scopeId"`
+	From              string        `json:"from"`
+	To                string        `json:"to"`
+	Mode              MessageMode   `json:"mode"`
+	Body              string        `json:"body"`
+	Context           []ContextItem `json:"context"`
+	ResponseTo        string        `json:"responseTo,omitempty"`
+	State             DeliveryState `json:"state"`
+	CreatedAt         string        `json:"createdAt"`
+	ExpiresAt         string        `json:"expiresAt,omitempty"`
+	DeliveredAt       string        `json:"deliveredAt,omitempty"`
+	AcknowledgedAt    string        `json:"acknowledgedAt,omitempty"`
+	RepliedAt         string        `json:"repliedAt,omitempty"`
+	ResponseMessageID string        `json:"responseMessageId,omitempty"`
+}
+
+type DeliveryReceipt struct {
+	MessageID         string        `json:"messageId"`
+	State             DeliveryState `json:"state"`
+	AcceptedAt        string        `json:"acceptedAt"`
+	DeliveredAt       string        `json:"deliveredAt,omitempty"`
+	AcknowledgedAt    string        `json:"acknowledgedAt,omitempty"`
+	RepliedAt         string        `json:"repliedAt,omitempty"`
+	ResponseMessageID string        `json:"responseMessageId,omitempty"`
+}
+
+type InboxReservation struct {
+	ID        string    `json:"id"`
+	ExpiresAt string    `json:"expiresAt"`
+	Messages  []Message `json:"messages"`
+}
+
+type Task struct {
+	ID           string   `json:"id"`
+	ScopeID      string   `json:"scopeId"`
+	Description  string   `json:"description"`
+	CreatedBy    string   `json:"createdBy"`
+	ClaimedBy    string   `json:"claimedBy,omitempty"`
+	Status       string   `json:"status"`
+	Dependencies []string `json:"dependencies"`
+	Note         string   `json:"note,omitempty"`
+	CreatedAt    string   `json:"createdAt"`
+	UpdatedAt    string   `json:"updatedAt"`
+}
+
+type HumanEscalation struct {
+	ID         string   `json:"id"`
+	ScopeID    string   `json:"scopeId"`
+	AgentID    string   `json:"agentId"`
+	Question   string   `json:"question"`
+	Options    []string `json:"options"`
+	Status     string   `json:"status"`
+	Answer     string   `json:"answer,omitempty"`
+	CreatedAt  string   `json:"createdAt"`
+	ResolvedAt string   `json:"resolvedAt,omitempty"`
+}
+
+type CreateScopeInput struct {
+	ID string `json:"id,omitempty"`
+}
+
+type CreateScopeResult struct {
+	ScopeID    string `json:"scopeId"`
+	ScopeToken string `json:"scopeToken"`
+}
+
+type RegisterAgentInput struct {
+	ID           string            `json:"id,omitempty"`
+	DisplayName  string            `json:"displayName"`
+	Capabilities []AgentCapability `json:"capabilities,omitempty"`
+	ConnectTo    []string          `json:"connectTo,omitempty"`
+	LeaseMS      int64             `json:"leaseMs,omitempty"`
+}
+
+type RegisterAgentResult struct {
+	AgentIdentity
+	AgentToken     string `json:"agentToken"`
+	LeaseExpiresAt string `json:"leaseExpiresAt"`
+}
+
+type HeartbeatInput struct {
+	Lifecycle AgentLifecycle `json:"lifecycle"`
+	Ready     bool           `json:"ready"`
+	LeaseMS   int64          `json:"leaseMs,omitempty"`
+}
+
+type SendMessageInput struct {
+	To             string        `json:"to"`
+	Body           string        `json:"body"`
+	Mode           MessageMode   `json:"mode,omitempty"`
+	ResponseTo     string        `json:"responseTo,omitempty"`
+	IdempotencyKey string        `json:"idempotencyKey,omitempty"`
+	ExpiresInMS    int64         `json:"expiresInMs,omitempty"`
+	Context        []ContextItem `json:"context,omitempty"`
+}
+
+type AddTaskInput struct {
+	Description  string   `json:"description"`
+	Dependencies []string `json:"dependencies,omitempty"`
+}
+
+type AskHumanInput struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
+}
+
+type RunFile struct {
+	ProtocolVersion string `json:"protocolVersion"`
+	Address         string `json:"address"`
+	PID             int    `json:"pid"`
+	StartedAt       string `json:"startedAt"`
+	AdminToken      string `json:"adminToken"`
+}
+
+type Health struct {
+	Name            string `json:"name"`
+	ProtocolVersion string `json:"protocolVersion"`
+	Status          string `json:"status"`
+	StartedAt       string `json:"startedAt"`
+}
+
+type NodeIdentity struct {
+	AgentIdentity
+	LeaseExpiresAt string `json:"leaseExpiresAt"`
+}
+
+type NodeStatus struct {
+	Identity NodeIdentity `json:"identity"`
+	Agent    Agent        `json:"agent"`
+}

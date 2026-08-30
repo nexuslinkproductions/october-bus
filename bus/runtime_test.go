@@ -1,0 +1,548 @@
+package bus
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+type testAgents struct {
+	runtime       *Runtime
+	scope         CreateScopeResult
+	planner       RegisterAgentResult
+	reviewer      RegisterAgentResult
+	plannerToken  string
+	reviewerToken string
+}
+
+func setupAgents(t *testing.T, source string) testAgents {
+	t.Helper()
+	ctx := context.Background()
+	runtimeValue, err := Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := runtimeValue.CreateScope(ctx, CreateScopeInput{ID: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planner, err := runtimeValue.RegisterAgent(ctx, scope.ScopeToken, RegisterAgentInput{ID: "planner", DisplayName: "Planner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, err := runtimeValue.RegisterAgent(ctx, scope.ScopeToken, RegisterAgentInput{ID: "reviewer", DisplayName: "Reviewer", ConnectTo: []string{"planner"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testAgents{runtime: runtimeValue, scope: scope, planner: planner, reviewer: reviewer, plannerToken: planner.AgentToken, reviewerToken: reviewer.AgentToken}
+}
+
+func requireCode(t *testing.T, err error, code ErrorCode) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected %s", code)
+	}
+	var failure *BusError
+	if !errors.As(err, &failure) || failure.Code != code {
+		t.Fatalf("expected %s, got %v", code, err)
+	}
+}
+
+func TestDurableRequestRedeliveryAcknowledgementAndReply(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	receipt, err := agents.runtime.SendMessage(ctx, agents.plannerToken, SendMessageInput{To: "reviewer", Mode: MessageRequest, Body: "Review this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || reservation == nil || len(reservation.Messages) != 1 {
+		t.Fatalf("unexpected reservation: %#v, %v", reservation, err)
+	}
+	first, err := agents.runtime.CommitInbox(ctx, agents.reviewerToken, reservation.ID)
+	if err != nil || first[0].State != DeliveryDelivered {
+		t.Fatalf("unexpected delivery: %#v, %v", first, err)
+	}
+	redelivery, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || redelivery == nil || redelivery.Messages[0].ID != receipt.MessageID {
+		t.Fatalf("unexpected redelivery: %#v, %v", redelivery, err)
+	}
+	if _, err := agents.runtime.CommitInbox(ctx, agents.reviewerToken, redelivery.ID); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := agents.runtime.AcknowledgeMessages(ctx, agents.reviewerToken, []string{receipt.MessageID}); err != nil || count != 1 {
+		t.Fatalf("unexpected acknowledgement: %d, %v", count, err)
+	}
+	replyInput := SendMessageInput{To: "planner", Mode: MessageResponse, ResponseTo: receipt.MessageID, Body: "Found an issue", IdempotencyKey: "reply-1"}
+	reply, err := agents.runtime.SendMessage(ctx, agents.reviewerToken, replyInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := agents.runtime.SendMessage(ctx, agents.reviewerToken, replyInput)
+	if err != nil || retry.MessageID != reply.MessageID {
+		t.Fatalf("response retry did not return the original receipt: %#v, %v", retry, err)
+	}
+	updated, err := agents.runtime.Receipt(ctx, agents.plannerToken, receipt.MessageID)
+	if err != nil || updated.ResponseMessageID != reply.MessageID || updated.RepliedAt == "" {
+		t.Fatalf("unexpected reply receipt: %#v, %v", updated, err)
+	}
+	_, err = agents.runtime.SendMessage(ctx, agents.reviewerToken, SendMessageInput{To: "planner", Mode: MessageResponse, ResponseTo: receipt.MessageID, Body: "Second reply"})
+	requireCode(t, err, CodeConflict)
+}
+
+func TestMessageIdempotencyRejectsPayloadChanges(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	input := SendMessageInput{To: "reviewer", Mode: MessageRequest, Body: "Review this", IdempotencyKey: "review-42"}
+	first, err := agents.runtime.SendMessage(ctx, agents.plannerToken, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := agents.runtime.SendMessage(ctx, agents.plannerToken, input)
+	if err != nil || retry.MessageID != first.MessageID {
+		t.Fatalf("retry did not return the original receipt: %#v, %v", retry, err)
+	}
+	input.Body = "Review something else"
+	_, err = agents.runtime.SendMessage(ctx, agents.plannerToken, input)
+	requireCode(t, err, CodeConflict)
+	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || reservation == nil || len(reservation.Messages) != 1 {
+		t.Fatalf("idempotent retry created duplicate work: %#v, %v", reservation, err)
+	}
+}
+
+func TestResponsesRequireDeliveryButMayFinishAfterExpiry(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+
+	undelivered, err := agents.runtime.SendMessage(ctx, agents.plannerToken, SendMessageInput{
+		To: "reviewer", Mode: MessageRequest, Body: "Do not deliver", ExpiresInMS: 40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	_, err = agents.runtime.SendMessage(ctx, agents.reviewerToken, SendMessageInput{
+		To: "planner", Mode: MessageResponse, ResponseTo: undelivered.MessageID, Body: "Too late",
+	})
+	requireCode(t, err, CodeConflict)
+
+	delivered, err := agents.runtime.SendMessage(ctx, agents.plannerToken, SendMessageInput{
+		To: "reviewer", Mode: MessageRequest, Body: "Deliver before expiry", ExpiresInMS: 40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || reservation == nil {
+		t.Fatalf("unexpected reservation: %#v, %v", reservation, err)
+	}
+	if _, err := agents.runtime.CommitInbox(ctx, agents.reviewerToken, reservation.ID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	reply, err := agents.runtime.SendMessage(ctx, agents.reviewerToken, SendMessageInput{
+		To: "planner", Mode: MessageResponse, ResponseTo: delivered.MessageID, Body: "Finished after expiry",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := agents.runtime.Receipt(ctx, agents.plannerToken, delivered.MessageID)
+	if err != nil || receipt.State != DeliveryExpired || receipt.ResponseMessageID != reply.MessageID || receipt.RepliedAt == "" {
+		t.Fatalf("late delivered reply is not observable: %#v, %v", receipt, err)
+	}
+}
+
+func TestExpiredReservationCannotDeliverOrResurrectMessage(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	receipt, err := agents.runtime.SendMessage(ctx, agents.plannerToken, SendMessageInput{
+		To: "reviewer", Body: "Short lived", ExpiresInMS: 40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || reservation == nil {
+		t.Fatalf("unexpected reservation: %#v, %v", reservation, err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	if err := agents.runtime.ReleaseInbox(ctx, agents.reviewerToken, reservation.ID); err != nil {
+		t.Fatal(err)
+	}
+	state, err := agents.runtime.Receipt(ctx, agents.plannerToken, receipt.MessageID)
+	if err != nil || state.State != DeliveryExpired {
+		t.Fatalf("release resurrected an expired message: %#v, %v", state, err)
+	}
+	receipt, err = agents.runtime.SendMessage(ctx, agents.plannerToken, SendMessageInput{
+		To: "reviewer", Body: "Also short lived", ExpiresInMS: 40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err = agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || reservation == nil {
+		t.Fatalf("unexpected second reservation: %#v, %v", reservation, err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	messages, err := agents.runtime.CommitInbox(ctx, agents.reviewerToken, reservation.ID)
+	if err != nil || len(messages) != 0 {
+		t.Fatalf("expired message was delivered: %#v, %v", messages, err)
+	}
+	state, err = agents.runtime.Receipt(ctx, agents.plannerToken, receipt.MessageID)
+	if err != nil || state.State != DeliveryExpired {
+		t.Fatalf("commit did not preserve expiry: %#v, %v", state, err)
+	}
+	receipt, err = agents.runtime.SendMessage(ctx, agents.plannerToken, SendMessageInput{
+		To: "reviewer", Body: "Delivered before expiry", ExpiresInMS: 40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err = agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || reservation == nil {
+		t.Fatalf("unexpected third reservation: %#v, %v", reservation, err)
+	}
+	if _, err := agents.runtime.CommitInbox(ctx, agents.reviewerToken, reservation.ID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	count, err := agents.runtime.AcknowledgeMessages(ctx, agents.reviewerToken, []string{receipt.MessageID})
+	if err != nil || count != 0 {
+		t.Fatalf("late acknowledgement won over expiry: %d, %v", count, err)
+	}
+	state, err = agents.runtime.Receipt(ctx, agents.plannerToken, receipt.MessageID)
+	if err != nil || state.State != DeliveryExpired {
+		t.Fatalf("acknowledgement did not preserve expiry: %#v, %v", state, err)
+	}
+}
+
+func TestTaskClaimsRespectDependenciesAndOwnership(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	first, err := agents.runtime.AddTask(ctx, agents.plannerToken, AddTaskInput{Description: "Implement"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := agents.runtime.AddTask(ctx, agents.plannerToken, AddTaskInput{Description: "Review", Dependencies: []string{first.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = agents.runtime.ClaimTask(ctx, agents.reviewerToken, second.ID)
+	requireCode(t, err, CodeConflict)
+	if _, err := agents.runtime.ClaimTask(ctx, agents.plannerToken, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = agents.runtime.CompleteTask(ctx, agents.reviewerToken, first.ID, "not mine")
+	requireCode(t, err, CodeConflict)
+	if _, err := agents.runtime.CompleteTask(ctx, agents.plannerToken, first.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := agents.runtime.ClaimTask(ctx, agents.reviewerToken, second.ID)
+	if err != nil || claimed.ClaimedBy != "reviewer" {
+		t.Fatalf("unexpected claim: %#v, %v", claimed, err)
+	}
+}
+
+func TestTaskReleaseAndExecutionReplacementRecoverClaims(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	task, err := agents.runtime.AddTask(ctx, agents.plannerToken, AddTaskInput{Description: "Review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agents.runtime.ClaimTask(ctx, agents.reviewerToken, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	released, err := agents.runtime.ReleaseTask(ctx, agents.reviewerToken, task.ID)
+	if err != nil || released.Status != "open" || released.ClaimedBy != "" {
+		t.Fatalf("unexpected release: %#v, %v", released, err)
+	}
+	if _, err := agents.runtime.ClaimTask(ctx, agents.reviewerToken, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agents.runtime.RegisterAgent(ctx, agents.scope.ScopeToken, RegisterAgentInput{ID: "reviewer", DisplayName: "Reviewer replacement"}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := agents.runtime.ClaimTask(ctx, agents.plannerToken, task.ID)
+	if err != nil || recovered.ClaimedBy != "planner" {
+		t.Fatalf("stale execution claim was not recovered: %#v, %v", recovered, err)
+	}
+}
+
+func TestExecutionReplacementRetiresPreviousToken(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	replacement, err := agents.runtime.RegisterAgent(ctx, agents.scope.ScopeToken, RegisterAgentInput{ID: "planner", DisplayName: "Planner 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ExecutionID == agents.planner.ExecutionID {
+		t.Fatal("execution id was not replaced")
+	}
+	_, err = agents.runtime.ListPeers(ctx, agents.plannerToken)
+	requireCode(t, err, CodeUnauthenticated)
+	if _, err := agents.runtime.ListPeers(ctx, replacement.AgentToken); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHumanEscalationIsDurableAndScopeOwned(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	escalation, err := agents.runtime.AskHuman(ctx, agents.plannerToken, AskHumanInput{Question: "Deploy?", Options: []string{"yes", "no"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := agents.runtime.ListEscalations(ctx, agents.scope.ScopeToken)
+	if err != nil || len(values) != 1 || values[0].ID != escalation.ID {
+		t.Fatalf("unexpected escalations: %#v, %v", values, err)
+	}
+	resolved, err := agents.runtime.ResolveEscalation(ctx, agents.scope.ScopeToken, escalation.ID, "no")
+	if err != nil || resolved.Status != "resolved" || resolved.Answer != "no" {
+		t.Fatalf("unexpected resolution: %#v, %v", resolved, err)
+	}
+}
+
+func TestPendingEscalationsApplyPerAgentBackpressure(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	var first HumanEscalation
+	for i := 0; i < pendingEscalationCapPerAgent; i++ {
+		value, err := agents.runtime.AskHuman(ctx, agents.plannerToken, AskHumanInput{Question: "Continue?"})
+		if err != nil {
+			t.Fatalf("escalation %d failed: %v", i, err)
+		}
+		if i == 0 {
+			first = value
+		}
+	}
+	_, err := agents.runtime.AskHuman(ctx, agents.plannerToken, AskHumanInput{Question: "One too many"})
+	requireCode(t, err, CodeBackpressure)
+	if _, err := agents.runtime.ResolveEscalation(ctx, agents.scope.ScopeToken, first.ID, "continue"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agents.runtime.AskHuman(ctx, agents.plannerToken, AskHumanInput{Question: "Replacement"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSQLitePreservesAcceptedWorkAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bus.db")
+	agents := setupAgents(t, path)
+	ctx := context.Background()
+	receipt, err := agents.runtime.SendMessage(ctx, agents.plannerToken, SendMessageInput{To: "reviewer", Mode: MessageRequest, Body: "Persist me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agents.runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	reservation, err := restarted.ReserveInbox(ctx, agents.reviewerToken, 10)
+	if err != nil || reservation == nil || reservation.Messages[0].ID != receipt.MessageID {
+		t.Fatalf("message did not survive restart: %#v, %v", reservation, err)
+	}
+}
+
+func TestOlderSchemaFailsBeforeServingWork(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`PRAGMA user_version=1`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Open(path)
+	if err == nil || !strings.Contains(err.Error(), "database schema 1 does not match 2") {
+		t.Fatalf("older schema did not fail clearly: %v", err)
+	}
+}
+
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	clone := request.Clone(request.Context())
+	clone.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(clone)
+}
+
+func TestHTTPAndMCPUseTheSameAgentAuthority(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	adminToken, err := randomValue(32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(agents.runtime, ServerOptions{AdminToken: adminToken})
+	address, err := server.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := Client{Address: address, Token: agents.plannerToken}
+	peers, err := client.ListPeers(ctx)
+	if err != nil || len(peers) != 1 || peers[0].ID != "reviewer" {
+		t.Fatalf("unexpected HTTP peers: %#v, %v", peers, err)
+	}
+	_, err = (Client{Address: address, Token: "invalid"}).ListPeers(ctx)
+	requireCode(t, err, CodeUnauthenticated)
+	plannerClient := Client{Address: address, Token: agents.plannerToken}
+	reviewerClient := Client{Address: address, Token: agents.reviewerToken}
+	ownerClient := Client{Address: address, Token: agents.scope.ScopeToken}
+	escalation, err := plannerClient.AskHuman(ctx, AskHumanInput{Question: "Proceed?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	escalations, err := ownerClient.ListEscalations(ctx)
+	if err != nil || len(escalations) != 1 || escalations[0].ID != escalation.ID {
+		t.Fatalf("scope escalation route failed: %#v, %v", escalations, err)
+	}
+	if _, err := ownerClient.ResolveEscalation(ctx, escalation.ID, "yes"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = plannerClient.ListEscalations(ctx)
+	requireCode(t, err, CodeUnauthenticated)
+	receipt, err := plannerClient.SendMessage(ctx, SendMessageInput{To: "reviewer", Body: "Reserve me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := reviewerClient.ReserveInbox(ctx, 10)
+	if err != nil || reservation == nil {
+		t.Fatalf("unexpected HTTP reservation: %#v, %v", reservation, err)
+	}
+	if err := reviewerClient.ReleaseInbox(ctx, reservation.ID); err != nil {
+		t.Fatal(err)
+	}
+	reservation, err = reviewerClient.ReserveInbox(ctx, 10)
+	if err != nil || reservation == nil || reservation.Messages[0].ID != receipt.MessageID {
+		t.Fatalf("released inbox was not available again: %#v, %v", reservation, err)
+	}
+	httpClient := &http.Client{Transport: bearerTransport{token: agents.plannerToken, base: http.DefaultTransport}, Timeout: 10 * time.Second}
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: address + "/mcp", HTTPClient: httpClient, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	tools, err := session.ListTools(ctx, nil)
+	if err != nil || len(tools.Tools) != 11 {
+		t.Fatalf("unexpected tools: %d, %v", len(tools.Tools), err)
+	}
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "list_peers", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("MCP list_peers failed: %#v, %v", result, err)
+	}
+}
+
+func TestServerWithoutAdminCredentialCannotCreateScopes(t *testing.T) {
+	runtimeValue, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(runtimeValue, ServerOptions{})
+	address, err := server.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = (Client{Address: address, Token: " "}).CreateScope(ctx, CreateScopeInput{ID: "forbidden"})
+	requireCode(t, err, CodeUnauthenticated)
+}
+
+func TestDaemonOwnsOneRunFile(t *testing.T) {
+	root := t.TempDir()
+	paths := DaemonPaths{
+		DataDir: filepath.Join(root, "data"), RuntimeDir: filepath.Join(root, "run"),
+		Database: filepath.Join(root, "data", "bus.db"), RunFile: filepath.Join(root, "run", "bus.json"),
+		LockFile: filepath.Join(root, "run", "bus.lock"),
+	}
+	daemon, err := StartDaemon(context.Background(), 0, &paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Stop(context.Background())
+	run, err := ReadRunFile(paths.RunFile)
+	if err != nil || run.AdminToken == "" || run.PID != os.Getpid() {
+		t.Fatalf("unexpected run file: %#v, %v", run, err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(paths.RunFile)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("run file permissions are %v, %v", info.Mode().Perm(), err)
+		}
+	}
+	_, err = StartDaemon(context.Background(), 0, &paths)
+	if err == nil {
+		t.Fatal("second daemon unexpectedly started")
+	}
+	if err := daemon.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(paths.RunFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("run file was not removed: %v", err)
+	}
+}
+
+func TestOmarchyManifestPointsToHeadlessService(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Kinds       []string          `json:"kinds"`
+		EntryPoints map[string]string `json:"entryPoints"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Kinds) != 1 || manifest.Kinds[0] != "service" {
+		t.Fatalf("unexpected plugin kinds: %#v", manifest.Kinds)
+	}
+	service := filepath.Join("..", manifest.EntryPoints["service"])
+	if info, err := os.Stat(service); err != nil || info.IsDir() {
+		t.Fatalf("service entry point is missing: %v", err)
+	}
+	qml, err := os.ReadFile(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(qml)
+	if strings.Contains(text, "--foreground") || !strings.Contains(text, "healthyTimer") {
+		t.Fatal("service lifecycle flags or restart backoff are stale")
+	}
+}
