@@ -41,11 +41,11 @@ Use `bus.StartAgentSession` when an adapter needs registration, heartbeat, execu
 Install the current prerelease:
 
 ```bash
-npm install october-bus@next
+npm install @october-dev/october-bus@next
 ```
 
 ```ts
-import { OctoberBusAgentSession } from 'october-bus'
+import { OctoberBusAgentSession } from '@october-dev/october-bus'
 
 const session = await OctoberBusAgentSession.start({
   address,
@@ -70,7 +70,7 @@ Use `pollInbox` for abortable pull delivery with bounded backoff. Use `withClaim
 Go returns `*bus.BusError`. TypeScript throws `BusError`. Branch on the protocol error code instead of matching the human-readable message.
 
 ```ts
-import { BusError } from 'october-bus'
+import { BusError } from '@october-dev/october-bus'
 
 try {
   await session.client.claimTask(taskId)

@@ -11,7 +11,7 @@ The client is in active development and has not reached a stable release. Before
 Install the current prerelease from the `next` tag:
 
 ```sh
-npm install october-bus@next
+npm install @october-dev/october-bus@next
 ```
 
 ## Example
@@ -19,7 +19,7 @@ npm install october-bus@next
 Start the daemon, create a scope with the October Bus CLI, and set the returned token as `OCTOBER_BUS_SCOPE_TOKEN`.
 
 ```ts
-import { OctoberBusClient, OctoberBusScopeClient } from 'october-bus'
+import { OctoberBusClient, OctoberBusScopeClient } from '@october-dev/october-bus'
 
 const address = 'http://127.0.0.1:4765'
 const scope = new OctoberBusScopeClient(address, process.env.OCTOBER_BUS_SCOPE_TOKEN!)
