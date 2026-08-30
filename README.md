@@ -31,7 +31,7 @@ People increasingly run several coding agents at once. The human often becomes t
 Agents should be able to coordinate directly while keeping their own tools, permissions, and context. October Bus provides the shared language for that coordination. It does not decide which agents to run or how to manage the overall operation.
 
 > [!NOTE]
-> **Project status:** The first standalone runtime is now in active development. The native Go daemon, TypeScript client, MCP tools, durable SQLite store, and two-agent demo are runnable. Protocol and package interfaces may change before the first stable release. Harness adapters and the conformance suite have not landed yet.
+> **Project status:** The first standalone runtime is now in active development. The native Go daemon, TypeScript client, MCP tools, durable SQLite store, and two-agent demo are runnable. Early Claude Code and Codex configurations are included. Protocol and package interfaces may change before the first stable release, and no harness integration is conformance-verified yet.
 
 ## What agents can do
 
@@ -160,6 +160,8 @@ Delivery state is explicit. A message may be queued, reserved by one delivery at
 
 A logical agent identity is not enough to act. The runtime checks the current execution token and lease. Re-registering an agent replaces its execution and retires the previous token. Task claims belong to that execution. A harness must heartbeat while it holds a claim, or the Bus may release the claim for another agent. Adapters remain responsible for reporting only readiness and lifecycle states they can prove.
 
+Agent IDs are case-sensitive and exact. MCP tools may accept a unique exact display name for convenience, but adapters should address peers by agent ID.
+
 ## Integrating a new harness
 
 A harness can support October Bus without using October Desktop.
@@ -181,7 +183,7 @@ If a harness cannot safely wake itself or prove that it is idle, it can implemen
 
 ## Compatibility
 
-The standalone repository does not ship harness adapters yet. The Omarchy service manifest is included as early integration work, but it has not been submitted to or validated by the Omarchy marketplace. The compatibility matrix will list only adapters included here and verified by the conformance suite.
+Early Claude Code and Codex configurations live in `adapters/`. They are not yet conformance-verified and are not compatibility claims. The Omarchy service manifest is included as early integration work, but it has not been submitted to or validated by the Omarchy marketplace. The compatibility matrix will list only adapters verified by the conformance suite.
 
 The current runtime tests cover execution replacement, durable restart recovery, idempotent retries, message expiry, redelivery and acknowledgement, reply linking, recoverable task claims, task dependencies, human escalation, HTTP clients, and MCP authority. The planned conformance suite will also cover:
 

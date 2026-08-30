@@ -398,6 +398,159 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	return t.base.RoundTrip(clone)
 }
 
+func TestPeerResolutionUsesExactCaseSensitiveAgentIDs(t *testing.T) {
+	ctx := context.Background()
+	runtimeValue, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtimeValue.Close()
+	scope, err := runtimeValue.CreateScope(ctx, CreateScopeInput{ID: "peer-resolution"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := runtimeValue.RegisterAgent(ctx, scope.ScopeToken, RegisterAgentInput{ID: "sender", DisplayName: "Sender"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peers := []RegisterAgentInput{
+		{ID: "Reviewer", DisplayName: "Primary", ConnectTo: []string{"sender"}},
+		{ID: "reviewer", DisplayName: "Secondary", ConnectTo: []string{"sender"}},
+		{ID: "attacker", DisplayName: "Reviewer", ConnectTo: []string{"sender"}},
+		{ID: "writer-1", DisplayName: "Writer", ConnectTo: []string{"sender"}},
+		{ID: "writer-2", DisplayName: "writer", ConnectTo: []string{"sender"}},
+		{ID: "architect", DisplayName: "Architecture", ConnectTo: []string{"sender"}},
+	}
+	for _, input := range peers {
+		if _, err := runtimeValue.RegisterAgent(ctx, scope.ScopeToken, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := runtimeValue.RegisterAgent(ctx, scope.ScopeToken, RegisterAgentInput{ID: "unlinked", DisplayName: "Unlinked"}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(runtimeValue, ServerOptions{})
+
+	resolved, err := server.resolvePeer(ctx, sender.AgentToken, "Reviewer")
+	if err != nil || resolved.ID != "Reviewer" {
+		t.Fatalf("exact agent ID did not win over a matching display name: %#v, %v", resolved, err)
+	}
+	resolved, err = server.resolvePeer(ctx, sender.AgentToken, "reviewer")
+	if err != nil || resolved.ID != "reviewer" {
+		t.Fatalf("case-distinct agent ID did not resolve exactly: %#v, %v", resolved, err)
+	}
+	resolved, err = server.resolvePeer(ctx, sender.AgentToken, "PRIMARY")
+	if err != nil || resolved.ID != "Reviewer" {
+		t.Fatalf("case-insensitive exact display name did not resolve: %#v, %v", resolved, err)
+	}
+	_, err = server.resolvePeer(ctx, sender.AgentToken, "Writer")
+	requireCode(t, err, CodeConflict)
+	_, err = server.resolvePeer(ctx, sender.AgentToken, "Arch")
+	requireCode(t, err, CodeNotFound)
+	_, err = server.resolvePeer(ctx, sender.AgentToken, "not-a-peer")
+	requireCode(t, err, CodeNotFound)
+	_, err = server.resolvePeer(ctx, sender.AgentToken, "unlinked")
+	requireCode(t, err, CodeNotFound)
+}
+
+func TestAgentSessionHeartbeatsAndStops(t *testing.T) {
+	ctx := context.Background()
+	runtimeValue, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(runtimeValue, ServerOptions{})
+	address, err := server.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop(context.Background())
+	scope, err := runtimeValue.CreateScope(ctx, CreateScopeInput{ID: "managed-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := StartAgentSession(ctx, AgentSessionOptions{
+		Address: address, ScopeToken: scope.ScopeToken,
+		Registration:      RegisterAgentInput{ID: "worker", DisplayName: "Worker", LeaseMS: 30000},
+		HeartbeatInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := Client{Address: address, Token: scope.ScopeToken}
+	agents, err := owner.ListAgents(ctx)
+	if err != nil || len(agents) != 1 || agents[0].Ready || !agents[0].Reachable || agents[0].Lifecycle != LifecycleStarting {
+		t.Fatalf("managed agent did not start conservatively: %#v, %v", agents, err)
+	}
+	if _, err := session.SetState(ctx, LifecycleReady, true); err != nil {
+		t.Fatal(err)
+	}
+	agents, err = owner.ListAgents(ctx)
+	if err != nil || len(agents) != 1 || !agents[0].Ready || agents[0].Lifecycle != LifecycleReady {
+		t.Fatalf("managed agent state did not update: %#v, %v", agents, err)
+	}
+	firstUpdate := agents[0].UpdatedAt
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		agents, err = owner.ListAgents(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if agents[0].UpdatedAt != firstUpdate {
+			break
+		}
+	}
+	if agents[0].UpdatedAt == firstUpdate {
+		t.Fatal("managed agent did not heartbeat")
+	}
+	closeCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := session.Close(closeCtx); err != nil {
+		t.Fatal(err)
+	}
+	agents, err = owner.ListAgents(ctx)
+	if err != nil || len(agents) != 1 || agents[0].Ready || agents[0].Reachable || agents[0].Lifecycle != LifecycleOffline {
+		t.Fatalf("managed agent did not stop cleanly: %#v, %v", agents, err)
+	}
+}
+
+func TestAgentSessionReportsExecutionReplacement(t *testing.T) {
+	ctx := context.Background()
+	runtimeValue, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(runtimeValue, ServerOptions{})
+	address, err := server.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop(context.Background())
+	scope, err := runtimeValue.CreateScope(ctx, CreateScopeInput{ID: "replaced-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := StartAgentSession(ctx, AgentSessionOptions{
+		Address: address, ScopeToken: scope.ScopeToken,
+		Registration:      RegisterAgentInput{ID: "worker", DisplayName: "Worker", LeaseMS: 30000},
+		HeartbeatInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := Client{Address: address, Token: scope.ScopeToken}
+	if _, err := owner.RegisterAgent(ctx, RegisterAgentInput{ID: "worker", DisplayName: "Replacement", LeaseMS: 30000}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		t.Fatal("managed session did not detect execution replacement")
+	}
+	requireCode(t, session.Err(), CodeUnauthenticated)
+}
+
 func TestHTTPAndMCPUseTheSameAgentAuthority(t *testing.T) {
 	agents := setupAgents(t, ":memory:")
 	adminToken, err := randomValue(32)

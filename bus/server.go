@@ -479,7 +479,7 @@ func (s *Server) newMCPServer(token string) *mcp.Server {
 			return nil, peers, err
 		})
 	type messagePeerInput struct {
-		Peer           string        `json:"peer" jsonschema:"peer id or display name"`
+		Peer           string        `json:"peer" jsonschema:"exact agent id preferred, or unique exact display name"`
 		Message        string        `json:"message" jsonschema:"message body"`
 		Mode           MessageMode   `json:"mode,omitempty"`
 		ResponseTo     string        `json:"responseTo,omitempty"`
@@ -575,24 +575,21 @@ func (s *Server) resolvePeer(ctx context.Context, token, value string) (Agent, e
 	if err != nil {
 		return Agent{}, err
 	}
-	needle := strings.ToLower(value)
-	exact := []Agent{}
-	partial := []Agent{}
 	for _, peer := range peers {
-		if strings.ToLower(peer.ID) == needle || strings.ToLower(peer.DisplayName) == needle {
-			exact = append(exact, peer)
-		}
-		if strings.Contains(strings.ToLower(peer.DisplayName), needle) {
-			partial = append(partial, peer)
+		if peer.ID == value {
+			return peer, nil
 		}
 	}
-	if len(exact) == 1 {
-		return exact[0], nil
+	matches := []Agent{}
+	for _, peer := range peers {
+		if strings.EqualFold(peer.DisplayName, value) {
+			matches = append(matches, peer)
+		}
 	}
-	if len(partial) == 1 {
-		return partial[0], nil
+	if len(matches) == 1 {
+		return matches[0], nil
 	}
-	if len(partial) == 0 {
+	if len(matches) == 0 {
 		return Agent{}, Errorf(CodeNotFound, "Linked peer "+value+" was not found")
 	}
 	return Agent{}, Errorf(CodeConflict, "Peer "+value+" is ambiguous")

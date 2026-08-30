@@ -1,0 +1,46 @@
+name: Publish npm prerelease
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-prerelease
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:errors
+      - run: go build -o /tmp/october-bus ./cmd/october-bus
+        working-directory: .
+      - run: npm run test:integration
+        env:
+          OCTOBER_BUS_BINARY: /tmp/october-bus
+      - name: Verify prerelease version
+        run: node -e "if (!require('./package.json').version.includes('-')) throw new Error('npm prerelease version required')"
+      - run: npm publish --provenance --access public --tag next
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

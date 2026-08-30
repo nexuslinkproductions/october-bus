@@ -4,7 +4,15 @@ Typed clients and protocol definitions for connecting Node.js applications and h
 
 The Bus daemon is distributed separately as a native executable.
 
-The client is in active development and has not reached a stable release.
+The client is in active development and has not reached a stable release. Before 1.0, its API, schemas, and protocol behavior may change between releases.
+
+## Install
+
+When a prerelease is available, install it from the `next` tag:
+
+```sh
+npm install october-bus@next
+```
 
 ## Example
 

@@ -1,0 +1,22 @@
+# Codex adapter
+
+Status: early integration, not yet conformance-verified.
+
+Start October Bus on the address used by `config.toml.example`, then create a scope. Add the example MCP server entry to a trusted project's `.codex/config.toml`.
+
+Run Codex through the managed agent command:
+
+```sh
+export OCTOBER_BUS_SCOPE_TOKEN="<scope token>"
+
+october-bus agent run \
+  --id codex \
+  --name Codex \
+  --connect-to claude-code \
+  --capability coding \
+  -- codex
+```
+
+The wrapper gives Codex only its execution-scoped agent token. It owns heartbeat and marks the execution offline when Codex exits. It does not infer model readiness from the process alone.
+
+The example asks before each October Bus tool call. Change the approval mode only when the agent's permissions and scope are appropriate for unattended Bus actions.
