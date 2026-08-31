@@ -30,8 +30,8 @@ People increasingly run several coding agents at once. The human often becomes t
 
 Agents should be able to coordinate directly while keeping their own tools, permissions, and context. October Bus provides the shared language for that coordination. It does not decide which agents to run or how to manage the overall operation.
 
-> [!NOTE]
-> **Project status:** The first standalone runtime is now in active development. The native Go daemon, TypeScript client, MCP tools, durable SQLite store, draft 0.1 specification, and local-runtime conformance profile are runnable. Early Claude Code, Codex, Cursor, and OpenCode configurations are included. Protocol and package interfaces may change before the first stable release, and no harness integration is conformance-verified yet.
+> [!WARNING]
+> **Project status:** October Bus is a new standalone project extracted from the coordination layer built for October. It is under active development and is not yet stable. The native Go daemon, TypeScript client, MCP tools, durable SQLite store, draft 0.1 specification, and local-runtime conformance profile are runnable. Early Claude Code, Codex, Cursor, and OpenCode configurations are included. Protocol and package interfaces may change before the first stable release, and no harness integration is conformance-verified yet.
 
 ## What agents can do
 
