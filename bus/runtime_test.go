@@ -712,9 +712,30 @@ func TestHTTPRoutesReturnDeterministicNotFoundAndMethodErrors(t *testing.T) {
 		code         ErrorCode
 		allow        string
 	}{
-		{http.MethodGet, "/v1/scopes", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodHead, "/health", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodGet},
 		{http.MethodPost, "/health", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodGet},
+		{http.MethodGet, "/v1/admin/shutdown", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/scopes", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodDelete, "/v1/agents", http.StatusMethodNotAllowed, CodeMethodNotAllowed, "GET, POST"},
+		{http.MethodGet, "/v1/links", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/me/heartbeat", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPatch},
+		{http.MethodPost, "/v1/peers", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodGet},
+		{http.MethodGet, "/v1/messages", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/messages/ack", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodPost, "/v1/messages/message-1", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodGet},
+		{http.MethodGet, "/v1/inbox/reserve", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/inbox/reservation-1/commit", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/inbox/reservation-1/release", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodDelete, "/v1/tasks", http.StatusMethodNotAllowed, CodeMethodNotAllowed, "GET, POST"},
+		{http.MethodGet, "/v1/tasks/task-1/claim", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/tasks/task-1/release", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/tasks/task-1/complete", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodGet, "/v1/escalations", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
+		{http.MethodPost, "/v1/escalations/escalation-1", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodGet},
+		{http.MethodPost, "/v1/scope/escalations", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodGet},
+		{http.MethodGet, "/v1/scope/escalations/escalation-1/resolve", http.StatusMethodNotAllowed, CodeMethodNotAllowed, http.MethodPost},
 		{http.MethodGet, "/v1/unknown", http.StatusNotFound, CodeNotFound, ""},
+		{http.MethodGet, "/v1/messages/message-1/extra", http.StatusNotFound, CodeNotFound, ""},
 	} {
 		request, err := http.NewRequest(test.method, address+test.path, nil)
 		if err != nil {
@@ -725,13 +746,18 @@ func TestHTTPRoutesReturnDeterministicNotFoundAndMethodErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		var payload struct {
+			OK    bool `json:"ok"`
 			Error struct {
 				Code ErrorCode `json:"code"`
 			} `json:"error"`
 		}
-		decodeErr := json.NewDecoder(response.Body).Decode(&payload)
+		var decodeErr error
+		if test.method != http.MethodHead {
+			decodeErr = json.NewDecoder(response.Body).Decode(&payload)
+		}
 		response.Body.Close()
-		if decodeErr != nil || response.StatusCode != test.status || payload.Error.Code != test.code || response.Header.Get("Allow") != test.allow {
+		wrongCode := test.method != http.MethodHead && payload.Error.Code != test.code
+		if decodeErr != nil || payload.OK || response.StatusCode != test.status || wrongCode || response.Header.Get("Allow") != test.allow || response.Header.Get("Content-Type") != "application/json" {
 			t.Fatalf("unexpected %s %s response: status=%d code=%s allow=%q decode=%v", test.method, test.path, response.StatusCode, payload.Error.Code, response.Header.Get("Allow"), decodeErr)
 		}
 	}
