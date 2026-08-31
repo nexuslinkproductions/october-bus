@@ -12,10 +12,28 @@ import (
 
 const bearerSchemeName a2a.SecuritySchemeName = "bearer"
 
+// CardOptions configures the content of a generated A2A Agent Card. The HTTP
+// delivery behaviour of the resulting card is controlled separately by
+// HandlerOptions in a2abridge/handler.go.
 type CardOptions struct {
 	InterfaceURL string
-	Version      string
-	Description  string
+
+	// ProviderOrganization names the organization that publishes the agent.
+	// ProviderOrganization and ProviderURL must be set together.
+	ProviderOrganization string
+
+	// ProviderURL points at the provider's public website or relevant
+	// documentation. It is validated like DocumentationURL and IconURL.
+	ProviderURL string
+
+	// DocumentationURL is an optional link to the agent's documentation.
+	DocumentationURL string
+
+	// IconURL is an optional URL to an icon representing the agent.
+	IconURL string
+
+	Version     string
+	Description string
 }
 
 func NewAgentCard(agent bus.Agent, options CardOptions) (*a2a.AgentCard, error) {
@@ -24,6 +42,26 @@ func NewAgentCard(agent bus.Agent, options CardOptions) (*a2a.AgentCard, error) 
 	}
 	if err := validateInterfaceURL(options.InterfaceURL); err != nil {
 		return nil, err
+	}
+	providerOrganization := strings.TrimSpace(options.ProviderOrganization)
+	if options.ProviderOrganization != "" && providerOrganization == "" {
+		return nil, errors.New("providerOrganization must not be blank")
+	}
+	if (providerOrganization == "") != (options.ProviderURL == "") {
+		return nil, errors.New("providerOrganization and providerUrl must be set together")
+	}
+	for _, field := range []struct {
+		name, value string
+	}{
+		{"providerUrl", options.ProviderURL},
+		{"documentationUrl", options.DocumentationURL},
+		{"iconUrl", options.IconURL},
+	} {
+		if field.value != "" {
+			if err := validatePublicURL(field.value); err != nil {
+				return nil, errors.New(field.name + ": " + err.Error())
+			}
+		}
 	}
 	if options.Version == "" {
 		options.Version = bus.Version
@@ -46,7 +84,7 @@ func NewAgentCard(agent bus.Agent, options CardOptions) (*a2a.AgentCard, error) 
 		})
 	}
 
-	return &a2a.AgentCard{
+	card := &a2a.AgentCard{
 		Name:        agent.DisplayName,
 		Description: options.Description,
 		Version:     options.Version,
@@ -66,7 +104,16 @@ func NewAgentCard(agent bus.Agent, options CardOptions) (*a2a.AgentCard, error) 
 		SecurityRequirements: a2a.SecurityRequirementsOptions{
 			{bearerSchemeName: a2a.SecuritySchemeScopes{}},
 		},
-	}, nil
+	}
+	if providerOrganization != "" {
+		card.Provider = &a2a.AgentProvider{
+			Org: providerOrganization,
+			URL: options.ProviderURL,
+		}
+	}
+	card.DocumentationURL = options.DocumentationURL
+	card.IconURL = options.IconURL
+	return card, nil
 }
 
 func validateInterfaceURL(value string) error {
@@ -82,6 +129,25 @@ func validateInterfaceURL(value string) error {
 	}
 	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
 		return errors.New("non-loopback A2A interfaces require HTTPS")
+	}
+	return nil
+}
+
+// validatePublicURL checks that a URL embedded in a public Agent Card is
+// safe to publish. It is stricter than a generic URL parser because cards
+// are read by other agents, cached by browsers, and indexed by search
+// engines. The interface URL uses a tighter contract (validateInterfaceURL)
+// because clients actually call it.
+func validatePublicURL(value string) error {
+	if len(value) > 4096 {
+		return errors.New("URL exceeds 4096 bytes")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("must be an absolute HTTP or HTTPS URL")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("must not include credentials, a query, or a fragment")
 	}
 	return nil
 }
