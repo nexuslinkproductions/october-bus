@@ -108,4 +108,6 @@ Generate a new idempotency key for each logical send. Keys remain bound to their
 
 `OctoberBusAgentSession` manages registration, conservative lifecycle state, heartbeat, execution replacement, and shutdown cleanup for adapters that use the TypeScript client.
 
+Pass `drainOnReady: true` so a `setState` call that flips `ready` from false to true also reserves the inbox once. This satisfies the protocol contract that a host reporting `ready=true` promptly resumes inbox reservation, so messages queued while the agent was not ready drain instead of waiting for the next turn. The drain is best effort and never fails the state change.
+
 `pollInbox` provides an abortable async iterator over repeated bounded inbox waits. `withClaimedTask` releases a claim when work or completion fails. Use both with a live agent session so the execution lease remains current while work is claimed.

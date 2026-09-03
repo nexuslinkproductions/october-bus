@@ -93,6 +93,63 @@ await assert.rejects(
   /waitMs must be an integer between 1 and 25000/
 )
 
+// drainOnReady: a setState that flips ready false->true must reserve the inbox
+// once so queued deliveries drain. A stub bus records the reserve call.
+{
+  const agent = {
+    id: 'drainer',
+    displayName: 'Drainer',
+    capabilities: [],
+    lifecycle: 'ready',
+    ready: true,
+    executionId: 'exec_1',
+    leaseExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+    registeredAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  let reserves = 0
+  const stub = createServer((req, response) => {
+    const reply = (value) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: true, result: value }))
+    }
+    if (req.method === 'POST' && req.url === '/v1/agents') {
+      return reply({ scopeId: 'scope_1', agentId: 'drainer', executionId: 'exec_1', agentToken: 'tok', leaseExpiresAt: agent.leaseExpiresAt })
+    }
+    if (req.method === 'PATCH' && req.url === '/v1/me/heartbeat') return reply(agent)
+    if (req.method === 'POST' && req.url === '/v1/inbox/reserve') {
+      reserves += 1
+      return reply(null)
+    }
+    response.writeHead(404, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ ok: false, error: { code: 'NOT_FOUND', message: 'nope' } }))
+  })
+  stub.listen(0, '127.0.0.1')
+  await once(stub, 'listening')
+  try {
+    const address = `http://127.0.0.1:${stub.address().port}`
+    const session = await OctoberBusAgentSession.start({
+      address,
+      scopeToken: 'scope-tok',
+      registration: { id: 'drainer', displayName: 'Drainer' },
+      drainOnReady: true,
+      heartbeatIntervalMs: 60_000
+    })
+    const before = reserves
+    await session.setState('ready', true) // false -> true: must drain
+    assert.equal(reserves, before + 1, 'ready transition must reserve inbox once')
+    await session.setState('ready', true) // already ready: no extra drain
+    assert.equal(reserves, before + 1, 'repeat ready must not reserve again')
+    await session.setState('working', true) // lifecycle change, still ready: no drain
+    assert.equal(reserves, before + 1, 'lifecycle-only change must not reserve')
+    await session.close()
+  } finally {
+    stub.closeAllConnections()
+    stub.close()
+    await once(stub, 'close')
+  }
+}
+
 const server = createServer((_request, response) => {
   response.writeHead(502, { 'content-type': 'text/plain' })
   response.end('upstream unavailable')

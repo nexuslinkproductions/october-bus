@@ -15,6 +15,14 @@ export interface AgentSessionOptions {
   heartbeatIntervalMs?: number
   initialLifecycle?: AgentLifecycle
   initialReady?: boolean
+  /**
+   * When true, a setState call that flips ready from false to true also drains
+   * the inbox once (best effort) so queued deliveries do not wait for the next
+   * turn. Satisfies the protocol contract that a host reporting ready=true
+   * promptly resumes inbox reservation. Defaults to false to preserve the
+   * existing conservative behavior.
+   */
+  drainOnReady?: boolean
   signal?: AbortSignal
 }
 
@@ -49,6 +57,7 @@ export class OctoberBusAgentSession {
 
   private readonly leaseMs: number
   private readonly heartbeatIntervalMs: number
+  private readonly drainOnReady: boolean
   private lifecycle: AgentLifecycle
   private ready: boolean
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -62,6 +71,7 @@ export class OctoberBusAgentSession {
     this.client = new OctoberBusClient(options.address, registration.agentToken)
     this.leaseMs = options.registration.leaseMs || 300_000
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? Math.floor(this.leaseMs / 3)
+    this.drainOnReady = options.drainOnReady ?? false
     this.lifecycle = options.initialLifecycle ?? 'starting'
     this.ready = options.initialReady ?? false
     this.done = new Promise((resolve) => {
@@ -108,9 +118,21 @@ export class OctoberBusAgentSession {
   async setState(lifecycle: AgentLifecycle, ready: boolean): Promise<Agent> {
     if (this.closed) throw new Error('agent session is closed')
     if (lifecycle === 'offline' && ready) throw new Error('offline agents cannot be ready')
+    const becameReady = ready && !this.ready
     this.lifecycle = lifecycle
     this.ready = ready
-    return this.client.heartbeat(lifecycle, ready, this.leaseMs)
+    const agent = await this.client.heartbeat(lifecycle, ready, this.leaseMs)
+    if (becameReady && this.drainOnReady) {
+      // Best effort: a host reporting ready=true must promptly resume inbox
+      // reservation so queued deliveries drain. A drain failure must not fail
+      // the state change; the next heartbeat/poll remains the fallback.
+      try {
+        await this.client.pullInbox(100, { waitMs: 1 })
+      } catch {
+        // Ignore. Readiness is already reported; delivery recovery continues.
+      }
+    }
+    return agent
   }
 
   async close(): Promise<void> {
