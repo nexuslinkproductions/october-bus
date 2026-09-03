@@ -162,6 +162,43 @@ func TestCommitInboxDoesNotWakeConcurrentWaiter(t *testing.T) {
 	}
 }
 
+// TestHeartbeatNotifiesInboxOnReadyTransition asserts the inbox signal fires on
+// the false->true ready transition (waking a host blocked in a waitMs reserve)
+// and not on a steady ready=true heartbeat.
+func TestHeartbeatNotifiesInboxOnReadyTransition(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+	key := signalKey{scopeID: agents.scope.ScopeID, consumerID: "reviewer"}
+
+	signal, unsubscribe := agents.runtime.signals.subscribe(key)
+	defer unsubscribe()
+	if _, err := agents.runtime.Heartbeat(ctx, agents.reviewerToken, HeartbeatInput{
+		Lifecycle: LifecycleReady, Ready: true, LeaseMS: 30000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("ready transition did not notify the inbox")
+	}
+
+	// Steady ready=true heartbeat: no transition, no notify.
+	signal2, unsubscribe2 := agents.runtime.signals.subscribe(key)
+	defer unsubscribe2()
+	if _, err := agents.runtime.Heartbeat(ctx, agents.reviewerToken, HeartbeatInput{
+		Lifecycle: LifecycleReady, Ready: true, LeaseMS: 30000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-signal2:
+		t.Fatal("steady ready heartbeat notified the inbox")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestReserveInboxTimesOutWithoutReservation(t *testing.T) {
 	agents := setupAgents(t, ":memory:")
 	defer agents.runtime.Close()

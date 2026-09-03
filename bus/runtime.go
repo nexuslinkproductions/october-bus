@@ -164,9 +164,15 @@ func (r *Runtime) Heartbeat(ctx context.Context, agentToken string, input Heartb
 	if err != nil {
 		return Agent{}, err
 	}
-	result, changed, err := r.store.Heartbeat(ctx, principal, input)
+	result, changed, becameReady, err := r.store.Heartbeat(ctx, principal, input)
 	if err == nil && changed {
 		r.notifyScope(principal.ScopeID)
+	}
+	if err == nil && becameReady {
+		// A host blocked in a waitMs inbox reserve while not ready must wake when
+		// the agent reports ready=true so queued deliveries drain. See the
+		// protocol contract: readiness is the host's obligation to observe.
+		r.signals.notify(signalKey{scopeID: principal.ScopeID, consumerID: principal.AgentID})
 	}
 	return result, err
 }
