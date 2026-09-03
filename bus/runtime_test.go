@@ -196,6 +196,19 @@ func TestScopeAuthorityPropagatesAuthenticationAndClassifierErrors(t *testing.T)
 		t.Fatal("classifier ran after a non-authentication failure")
 	}
 }
+// requireAgentReady heartbeats the given agent into the ready state so its
+// inbox reservations are admitted. Freshly registered agents are ready=false
+// (setupAgents stays conservative), and reservation admission is gated on
+// readiness, so tests that expect delivery or a ready empty wait must make the
+// consumer ready first.
+func requireAgentReady(t testing.TB, runtime *Runtime, token string) {
+	t.Helper()
+	if _, err := runtime.Heartbeat(context.Background(), token, HeartbeatInput{
+		Lifecycle: LifecycleReady, Ready: true, LeaseMS: 30000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestA2APrincipalLimitsLoadFromEnvironment(t *testing.T) {
 	t.Setenv("OCTOBER_BUS_A2A_PRINCIPAL_MESSAGE_LIMIT", "12")
@@ -218,6 +231,7 @@ func TestDurableRequestRedeliveryAcknowledgementAndReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireAgentReady(t, agents.runtime, agents.reviewerToken)
 	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10, 0)
 	if err != nil || reservation == nil || len(reservation.Messages) != 1 {
 		t.Fatalf("unexpected reservation: %#v, %v", reservation, err)
@@ -269,6 +283,7 @@ func TestMessageIdempotencyRejectsPayloadChanges(t *testing.T) {
 	input.Body = "Review something else"
 	_, err = agents.runtime.SendMessage(ctx, agents.plannerToken, input)
 	requireCode(t, err, CodeConflict)
+	requireAgentReady(t, agents.runtime, agents.reviewerToken)
 	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10, 0)
 	if err != nil || reservation == nil || len(reservation.Messages) != 1 {
 		t.Fatalf("idempotent retry created duplicate work: %#v, %v", reservation, err)
@@ -298,6 +313,7 @@ func TestResponsesRequireDeliveryButMayFinishAfterExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireAgentReady(t, agents.runtime, agents.reviewerToken)
 	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10, 0)
 	if err != nil || reservation == nil {
 		t.Fatalf("unexpected reservation: %#v, %v", reservation, err)
@@ -328,6 +344,7 @@ func TestExpiredReservationCannotDeliverOrResurrectMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireAgentReady(t, agents.runtime, agents.reviewerToken)
 	reservation, err := agents.runtime.ReserveInbox(ctx, agents.reviewerToken, 10, 0)
 	if err != nil || reservation == nil {
 		t.Fatalf("unexpected reservation: %#v, %v", reservation, err)
@@ -649,6 +666,7 @@ func TestSQLitePreservesAcceptedWorkAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
+	requireAgentReady(t, restarted, agents.reviewerToken)
 	reservation, err := restarted.ReserveInbox(ctx, agents.reviewerToken, 10, 0)
 	if err != nil || reservation == nil || reservation.Messages[0].ID != receipt.MessageID {
 		t.Fatalf("message did not survive restart: %#v, %v", reservation, err)
@@ -885,6 +903,7 @@ func TestHTTPAndMCPUseTheSameAgentAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireAgentReady(t, agents.runtime, agents.reviewerToken)
 	reservation, err := reviewerClient.ReserveInbox(ctx, 10, 0)
 	if err != nil || reservation == nil {
 		t.Fatalf("unexpected HTTP reservation: %#v, %v", reservation, err)
@@ -950,6 +969,7 @@ func TestHTTPAndMCPUseTheSameAgentAuthority(t *testing.T) {
 		result *mcp.CallToolResult
 		err    error
 	}
+	requireAgentReady(t, agents.runtime, agents.plannerToken)
 	waiting := make(chan callResult, 1)
 	go func() {
 		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "check_inbox", Arguments: map[string]any{"waitMs": 2000}})
