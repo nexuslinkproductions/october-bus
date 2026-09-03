@@ -27,6 +27,7 @@ An adapter MUST:
 - keep tokens out of logs and shared configuration;
 - report only lifecycle and readiness states supported by host evidence;
 - document pull-only delivery when it cannot wake the host;
+- resume inbox polling immediately after reporting `ready=true` so queued deliveries drain;
 - cleanly identify its harness, adapter, and supported protocol version.
 
 ## Optional behavior
