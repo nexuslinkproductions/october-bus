@@ -302,6 +302,48 @@ func RunMCPAdapter(ctx context.Context, options MCPAdapterOptions) (result Resul
 		return result, err
 	}
 
+	if err := record.check("drain-on-ready", func() error {
+		// Register a host-controlled execution: no StartAgentSession, so nothing
+		// heartbeats it until this check does -> not ready by default.
+		drainReg, err := owner.RegisterAgent(ctx, bus.RegisterAgentInput{
+			ID: "drain-host", DisplayName: "Drain Host", LeaseMS: 30000,
+		})
+		if err != nil {
+			return err
+		}
+		drain := bus.Client{Address: options.Address, Token: drainReg.AgentToken}
+		if err := owner.LinkAgents(ctx, "controller", "drain-host"); err != nil {
+			return err
+		}
+
+		// Queue a message while the host is not ready.
+		queued, err := controller.SendMessage(ctx, bus.SendMessageInput{
+			To: "drain-host", Body: "queued while not ready",
+		})
+		if err != nil {
+			return err
+		}
+
+		// Ready edge: ready=false -> true must resume inbox reservation.
+		if _, err := drain.Heartbeat(ctx, bus.HeartbeatInput{
+			Lifecycle: bus.LifecycleReady, Ready: true, LeaseMS: 30000,
+		}); err != nil {
+			return err
+		}
+
+		reservation, err := drain.ReserveInbox(ctx, 10, 0)
+		if err != nil {
+			return err
+		}
+		if reservation == nil || len(reservation.Messages) != 1 || reservation.Messages[0].ID != queued.MessageID {
+			return fmt.Errorf("ready edge did not resume inbox reservation: %#v", reservation)
+		}
+		_, err = drain.AcknowledgeMessages(ctx, []string{queued.MessageID})
+		return err
+	}); err != nil {
+		return result, err
+	}
+
 	if err := record.check("exact-peer-discovery", func() error {
 		peers, err := callTool[struct {
 			Peers []bus.Agent `json:"peers"`
