@@ -161,6 +161,27 @@ The daemon handles interrupt and termination signals and shuts down active HTTP 
 
 The repository does not yet ship platform service definitions. Keep credentials out of service arguments and logs when adding one.
 
+## Bridging to other machines
+
+The daemon binds to `127.0.0.1` by default. To reach it from another machine, forward a remote port to the local daemon over TCP (e.g. `socat` or `nginx`).
+
+REST routes work through a plain TCP forward. The `/mcp` endpoint does not: the MCP SDK rejects requests whose `Host` header is not loopback as DNS-rebinding protection and returns `403 Forbidden`. A plain `socat` bridge forwards the connection but does not rewrite the `Host` header, so `/mcp` fails over it while the REST routes keep working.
+
+When proxying `/mcp`, rewrite the `Host` header to the daemon's loopback address, for example:
+
+```nginx
+location /mcp {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host 127.0.0.1:8080;
+}
+```
+
+Also note `socat` uses a small default listen backlog (5), which drops connections under load. Use `backlog=64` or proxy through `nginx` instead:
+
+```bash
+socat TCP-LISTEN:8080,reuseaddr,fork,backlog=64 TCP:127.0.0.1:8080
+```
+
 ## Recovery
 
 Accepted messages and active tasks survive a normal daemon restart. If startup reports an invalid database schema or integrity problem, preserve the database before attempting repair. Automated migration and repair tools are planned before the first stable release.
