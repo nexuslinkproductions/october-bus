@@ -537,7 +537,7 @@ func Run(ctx context.Context, options Options) (result Result, runErr error) {
 			return err
 		}
 		_, err = planner.ResolveEscalation(ctx, escalation.ID, "yes")
-		if err := requireCode(err, bus.CodeUnauthenticated); err != nil {
+		if err := requireCode(err, bus.CodePermissionDenied); err != nil {
 			return err
 		}
 		escalations, err := owner.ListEscalations(ctx)

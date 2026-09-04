@@ -466,6 +466,13 @@ func TestShutdownRequiresAdminAuthority(t *testing.T) {
 	}
 }
 
+func TestAgentTokenOnScopeRouteIsPermissionDenied(t *testing.T) {
+	ctx := context.Background()
+	agents := setupAgents(t, ":memory:")
+	_, err := agents.runtime.ListAgents(ctx, agents.plannerToken)
+	requireCode(t, err, CodePermissionDenied)
+}
+
 func TestHumanEscalationIsDurableAndScopeOwned(t *testing.T) {
 	agents := setupAgents(t, ":memory:")
 	defer agents.runtime.Close()
@@ -755,7 +762,7 @@ func TestHTTPAndMCPUseTheSameAgentAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = plannerClient.ListEscalations(ctx)
-	requireCode(t, err, CodeUnauthenticated)
+	requireCode(t, err, CodePermissionDenied)
 	receipt, err := plannerClient.SendMessage(ctx, SendMessageInput{To: "reviewer", Body: "Reserve me"})
 	if err != nil {
 		t.Fatal(err)

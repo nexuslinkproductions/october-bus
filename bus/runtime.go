@@ -82,8 +82,25 @@ func (r *Runtime) CreateScope(ctx context.Context, input CreateScopeInput) (Crea
 	return r.store.CreateScope(ctx, input.ID)
 }
 
-func (r *Runtime) RegisterAgent(ctx context.Context, scopeToken string, input RegisterAgentInput) (RegisterAgentResult, error) {
+// resolveScopeToken authenticates a scope credential. A token that authenticates
+// as an agent but not a scope is a valid credential with the wrong authority
+// level, which is PERMISSION_DENIED rather than UNAUTHENTICATED per spec/0.1/http.md.
+func (r *Runtime) resolveScopeToken(ctx context.Context, scopeToken string) (string, error) {
 	scopeID, err := r.store.AuthenticateScope(ctx, scopeToken)
+	if err == nil {
+		return scopeID, nil
+	}
+	if AsBusError(err).Code != CodeUnauthenticated {
+		return "", err
+	}
+	if _, agentErr := r.store.AuthenticateAgent(ctx, scopeToken); agentErr == nil {
+		return "", Errorf(CodePermissionDenied, "Scope authority required")
+	}
+	return "", err
+}
+
+func (r *Runtime) RegisterAgent(ctx context.Context, scopeToken string, input RegisterAgentInput) (RegisterAgentResult, error) {
+	scopeID, err := r.resolveScopeToken(ctx, scopeToken)
 	if err != nil {
 		return RegisterAgentResult{}, err
 	}
@@ -120,7 +137,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, scopeToken string, input Re
 }
 
 func (r *Runtime) ListAgents(ctx context.Context, scopeToken string) ([]Agent, error) {
-	scopeID, err := r.store.AuthenticateScope(ctx, scopeToken)
+	scopeID, err := r.resolveScopeToken(ctx, scopeToken)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +145,7 @@ func (r *Runtime) ListAgents(ctx context.Context, scopeToken string) ([]Agent, e
 }
 
 func (r *Runtime) LinkAgents(ctx context.Context, scopeToken, left, right string) error {
-	scopeID, err := r.store.AuthenticateScope(ctx, scopeToken)
+	scopeID, err := r.resolveScopeToken(ctx, scopeToken)
 	if err != nil {
 		return err
 	}
@@ -576,7 +593,7 @@ func (r *Runtime) Escalation(ctx context.Context, agentToken, escalationID strin
 }
 
 func (r *Runtime) ListEscalations(ctx context.Context, scopeToken string) ([]HumanEscalation, error) {
-	scopeID, err := r.store.AuthenticateScope(ctx, scopeToken)
+	scopeID, err := r.resolveScopeToken(ctx, scopeToken)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +601,7 @@ func (r *Runtime) ListEscalations(ctx context.Context, scopeToken string) ([]Hum
 }
 
 func (r *Runtime) ResolveEscalation(ctx context.Context, scopeToken, escalationID, answer string) (HumanEscalation, error) {
-	scopeID, err := r.store.AuthenticateScope(ctx, scopeToken)
+	scopeID, err := r.resolveScopeToken(ctx, scopeToken)
 	if err != nil {
 		return HumanEscalation{}, err
 	}
