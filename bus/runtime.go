@@ -262,9 +262,6 @@ func (r *Runtime) ReserveInbox(ctx context.Context, agentToken string, limit int
 		return nil, Errorf(CodeInvalidArgument, "waitMs must be between 0 and 25000")
 	}
 	if waitMS == 0 {
-		if !principal.Ready {
-			return nil, nil
-		}
 		reservation, err := r.store.ReserveInbox(ctx, principal, limit)
 		if err == nil {
 			r.notifyScope(principal.ScopeID)
@@ -280,42 +277,6 @@ func (r *Runtime) ReserveInbox(ctx context.Context, agentToken string, limit int
 			unsubscribe()
 			return nil, err
 		}
-
-		if !principal.Ready {
-			// Not ready: do NOT touch Store.ReserveInbox or
-			// NextInboxReservationExpiry. Wait on the per-agent signal, the
-			// lease expiry, and the deadline. Skip the reservation-expiry probe
-			// entirely: no reservation can be admitted while Ready=false, and an
-			// already-expired MIN(expires_at) would otherwise make this branch
-			// spin until readiness changes.
-			now := time.Now()
-			if !now.Before(deadline) {
-				unsubscribe()
-				return nil, nil
-			}
-			wakeAt := deadline
-			if lease := time.UnixMilli(principal.LeaseExpiresAt); lease.Before(wakeAt) {
-				wakeAt = lease
-			}
-			wait := time.Until(wakeAt)
-			if wait <= 0 {
-				unsubscribe()
-				continue
-			}
-			timer := time.NewTimer(wait)
-			select {
-			case <-ctx.Done():
-				stopTimer(timer)
-				unsubscribe()
-				return nil, ctx.Err()
-			case <-signal:
-				stopTimer(timer)
-			case <-timer.C:
-			}
-			unsubscribe()
-			continue
-		}
-
 		reservation, err := r.store.ReserveInbox(ctx, principal, limit)
 		if err == nil {
 			r.notifyScope(principal.ScopeID)

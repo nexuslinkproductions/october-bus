@@ -197,10 +197,11 @@ func TestScopeAuthorityPropagatesAuthenticationAndClassifierErrors(t *testing.T)
 	}
 }
 // requireAgentReady heartbeats the given agent into the ready state so its
-// inbox reservations are admitted. Freshly registered agents are ready=false
-// (setupAgents stays conservative), and reservation admission is gated on
-// readiness, so tests that expect delivery or a ready empty wait must make the
-// consumer ready first.
+// heartbeats match a normal consumer and ready-edge wake paths are exercised.
+// Freshly registered agents are ready=false (setupAgents stays conservative);
+// delivery itself is not gated on readiness, but making the consumer ready is
+// the realistic steady-state for tests that expect delivery or a ready empty
+// wait.
 func requireAgentReady(t testing.TB, runtime *Runtime, token string) {
 	t.Helper()
 	if _, err := runtime.Heartbeat(context.Background(), token, HeartbeatInput{
