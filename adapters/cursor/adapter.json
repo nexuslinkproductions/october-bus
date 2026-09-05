@@ -3,7 +3,7 @@
   "id": "cursor-mcp",
   "adapterVersion": "0.1.0",
   "harnessFamily": "Cursor",
-  "status": "verified",
+  "status": "experimental",
   "protocolVersions": ["0.1"],
   "transport": "mcp",
   "delivery": "pull",
