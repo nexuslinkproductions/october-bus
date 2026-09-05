@@ -1,6 +1,6 @@
 # Claude Code adapter
 
-Status: verified with Claude Code 2.1.251 on macOS arm64. Other versions and platforms remain unverified.
+Status: experimental. Claude Code 2.1.251 is installed but auth is unavailable (claude auth status -> loggedIn: false). The full RUNBOOK has not been driven through the real harness yet. Other versions and platforms remain unverified.
 
 Start October Bus, then create a scope. The MCP configuration launches the stdio bridge inside the managed agent execution.
 

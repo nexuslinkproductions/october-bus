@@ -3,7 +3,7 @@
   "id": "claude-code-mcp",
   "adapterVersion": "0.1.0",
   "harnessFamily": "Claude Code",
-  "status": "verified",
+  "status": "experimental",
   "protocolVersions": ["0.1"],
   "transport": "mcp",
   "delivery": "pull",
