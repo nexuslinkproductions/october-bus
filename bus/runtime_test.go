@@ -1034,3 +1034,25 @@ func TestOmarchyManifestPointsToHeadlessService(t *testing.T) {
 		t.Fatal("service lifecycle flags or restart backoff are stale")
 	}
 }
+
+// TestScopeAuthorityReturnsPermissionDenied verifies that scope-authority routes
+// return 403 PERMISSION_DENIED (not 401) when presented with a valid agent token
+// that lacks scope authority. Covers routes from events.go, runtime.go, and
+// output_streams.go that were missed in the initial PR #106 fix.
+func TestScopeAuthorityReturnsPermissionDenied(t *testing.T) {
+	agents := setupAgents(t, ":memory:")
+	defer agents.runtime.Close()
+	ctx := context.Background()
+
+	// Events (events.go) — agent token on a scope-authority route.
+	_, err := agents.runtime.Events(ctx, agents.plannerToken, 0, 10, 0)
+	requireCode(t, err, CodePermissionDenied)
+
+	// StorageSummary (runtime.go) — agent token on a scope-authority route.
+	_, err = agents.runtime.StorageSummary(ctx, agents.plannerToken)
+	requireCode(t, err, CodePermissionDenied)
+
+	// CreateOutputStream (output_streams.go) — agent token on a scope-authority route.
+	_, err = agents.runtime.CreateOutputStream(ctx, agents.plannerToken, CreateOutputStreamInput{Name: "denied"})
+	requireCode(t, err, CodePermissionDenied)
+}

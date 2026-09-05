@@ -216,7 +216,7 @@ func Run(ctx context.Context, options Options) (result Result, runErr error) {
 			return fmt.Errorf("unexpected enabled publication: %#v, %v", enabled, err)
 		}
 		_, err = planner.CreateAgentCardPublication(ctx, bus.PublishAgentCardInput{AgentID: "planner"})
-		return requireCode(err, bus.CodeUnauthenticated)
+		return requireCode(err, bus.CodePermissionDenied)
 	}); err != nil {
 		return result, err
 	}
@@ -587,7 +587,7 @@ func Run(ctx context.Context, options Options) (result Result, runErr error) {
 			return ctx.Err()
 		}
 		_, err = planner.Events(ctx, 0, 10, 0)
-		return requireCode(err, bus.CodeUnauthenticated)
+		return requireCode(err, bus.CodePermissionDenied)
 	}); err != nil {
 		return result, err
 	}
@@ -598,7 +598,7 @@ func Run(ctx context.Context, options Options) (result Result, runErr error) {
 			return fmt.Errorf("unexpected storage summary: %#v, %v", summary, err)
 		}
 		_, err = planner.StorageSummary(ctx)
-		if err := requireCode(err, bus.CodeUnauthenticated); err != nil {
+		if err := requireCode(err, bus.CodePermissionDenied); err != nil {
 			return err
 		}
 		before := time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)

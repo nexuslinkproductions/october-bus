@@ -519,7 +519,7 @@ func (r *Runtime) ListTasks(ctx context.Context, token string, readyOnly bool) (
 }
 
 func (r *Runtime) StorageSummary(ctx context.Context, scopeToken string) (StorageSummary, error) {
-	scopeID, err := r.store.AuthenticateScope(ctx, scopeToken)
+	scopeID, err := r.resolveScopeToken(ctx, scopeToken)
 	if err != nil {
 		return StorageSummary{}, err
 	}
@@ -531,7 +531,7 @@ func (r *Runtime) StorageSummary(ctx context.Context, scopeToken string) (Storag
 }
 
 func (r *Runtime) PruneScope(ctx context.Context, scopeToken string, input PruneScopeInput) (PruneScopeResult, error) {
-	scopeID, err := r.store.AuthenticateScope(ctx, scopeToken)
+	scopeID, err := r.resolveScopeToken(ctx, scopeToken)
 	if err != nil {
 		return PruneScopeResult{}, err
 	}

@@ -1,0 +1,297 @@
+{
+  "screens": [],
+  "chatBoxes": [],
+  "stickies": [
+    {
+      "id": "sticky-mtlnjtso-0",
+      "position": {
+        "x": -2310.9466065640363,
+        "y": -2443.8249326631394
+      },
+      "text": "📁 october-bus\nDetected: No previewable app found\nNot previewable on the canvas — no web or phone screens were added.\nOpened for terminals & agents — drop a terminal or chat to work here.\n\nCouldn’t determine how to preview this folder.",
+      "color": "#fef3c7",
+      "size": {
+        "width": 300,
+        "height": 220
+      }
+    }
+  ],
+  "analytics": [],
+  "experiments": [],
+  "terminals": [
+    {
+      "ownerUserId": "7bdd92e0-79e7-4f72-aa05-b9a68259e2a1",
+      "ownerDeviceId": "13caae0f-2b0a-4a71-ae88-aa2a67d00539",
+      "ownerName": "contact",
+      "id": "term-mtlzb4dk-2",
+      "title": "Terminal",
+      "agentName": "Atlas",
+      "position": {
+        "x": 2627.6774478137377,
+        "y": 280.1503877881057
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "cwd": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/atlas-1788467393303",
+      "launchPending": false,
+      "permissionMode": "default",
+      "startCommand": "cursor-agent",
+      "harness": "cursor",
+      "worktreeId": "session:atlas-1788467393303",
+      "worktreeShared": false,
+      "worktreePath": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/atlas-1788467393303",
+      "branch": "october/atlas-1788467393303",
+      "baseRepoPath": "/Users/marcelspatz/october-bus"
+    },
+    {
+      "ownerUserId": "7bdd92e0-79e7-4f72-aa05-b9a68259e2a1",
+      "ownerDeviceId": "13caae0f-2b0a-4a71-ae88-aa2a67d00539",
+      "ownerName": "contact",
+      "id": "term-mtm05g36-7",
+      "title": "Terminal",
+      "agentName": "Apollo",
+      "position": {
+        "x": 3262.6774478137377,
+        "y": 287.1503877881057
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "cwd": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/apollo-1788468808181",
+      "launchPending": false,
+      "permissionMode": "bypassPermissions",
+      "startCommand": "hermes",
+      "harness": "hermes",
+      "worktreeId": "session:apollo-1788468808181",
+      "worktreeShared": false,
+      "worktreePath": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/apollo-1788468808181",
+      "branch": "october/apollo-1788468808181",
+      "baseRepoPath": "/Users/marcelspatz/october-bus"
+    }
+  ],
+  "closedTerminals": [
+    {
+      "id": "term-mtlzyfn2-5",
+      "agentName": "Apollo",
+      "harness": "hermes",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/october-bus",
+      "position": {
+        "x": 2975.6774478137377,
+        "y": 921.1503877881057
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "hermes"
+      },
+      "permissionMode": "bypassPermissions",
+      "closedAt": 1788468495378
+    },
+    {
+      "id": "term-mtlzkay4-4",
+      "agentName": "Apollo",
+      "harness": "hermes",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/october-bus",
+      "position": {
+        "x": 2619.6774478137377,
+        "y": 742.1503877881057
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "hermes"
+      },
+      "permissionMode": "bypassPermissions",
+      "closedAt": 1788467860294
+    },
+    {
+      "id": "term-mtlzb07t-1",
+      "agentName": "Apollo",
+      "harness": "hermes",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/october-bus",
+      "position": {
+        "x": 1957.677447813738,
+        "y": 280.1503877881058
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "hermes"
+      },
+      "permissionMode": "bypassPermissions",
+      "closedAt": 1788467817050
+    },
+    {
+      "id": "term-mtlz96em-0",
+      "agentName": "Orion",
+      "harness": "hermes",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/october-bus",
+      "position": {
+        "x": 1839.5414182011145,
+        "y": 222.4831600680206
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "hermes"
+      },
+      "permissionMode": "bypassPermissions",
+      "closedAt": 1788467382570
+    },
+    {
+      "id": "term-mtlnok4g-2",
+      "agentName": "Atlas",
+      "harness": "cursor",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/atlas-1788447864841",
+      "position": {
+        "x": 1831.0414182011145,
+        "y": -182.7168399319794
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "claude",
+        "sessionId": "62c83171-e56f-4128-8e3d-014ceaca2392",
+        "cwd": "/Users/marcelspatz/YURI-OS-MUSUBI/.claude"
+      },
+      "permissionMode": "default",
+      "closedAt": 1788467379362
+    },
+    {
+      "id": "term-mtlo9y9x-6",
+      "agentName": "Apollo",
+      "harness": "cursor",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/apollo-1788448862937",
+      "position": {
+        "x": 1207.0414182011145,
+        "y": -181.5168399319794
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "cursor"
+      },
+      "permissionMode": "default",
+      "closedAt": 1788467378972
+    },
+    {
+      "id": "term-mtlnliqi-1",
+      "agentName": "Apollo",
+      "harness": "hermes",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/october-bus",
+      "position": {
+        "x": 897.0414182011147,
+        "y": -199.7168399319794
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "hermes"
+      },
+      "permissionMode": "bypassPermissions",
+      "closedAt": 1788448857314
+    },
+    {
+      "id": "term-mtlo6t9z-5",
+      "agentName": "Orion",
+      "harness": "claude-code",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/october-bus",
+      "position": {
+        "x": 1862.0414182011145,
+        "y": 284.2831600680206
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "claude",
+        "sessionId": "4e54b11e-baeb-4d62-93fc-44470b0c5b82",
+        "file": "/Users/marcelspatz/.claude/projects/-Users-marcelspatz-Library-Application-Support-October-worktrees-october-bus-orion-1788448716474/4e54b11e-baeb-4d62-93fc-44470b0c5b82.jsonl",
+        "cwd": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/orion-1788448716474"
+      },
+      "permissionMode": "auto",
+      "closedAt": 1788448769054
+    },
+    {
+      "id": "term-mtlo37l6-4",
+      "agentName": "Orion",
+      "harness": "hermes",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/october-bus",
+      "position": {
+        "x": 1756.0414182011145,
+        "y": 228.2831600680206
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "hermes"
+      },
+      "permissionMode": "bypassPermissions",
+      "closedAt": 1788448583536
+    },
+    {
+      "id": "term-mtlnoo32-3",
+      "agentName": "Orion",
+      "harness": "cursor",
+      "title": "Terminal",
+      "cwd": "/Users/marcelspatz/Library/Application Support/October/worktrees/october-bus/orion-1788447870004",
+      "position": {
+        "x": 2227.0414182011145,
+        "y": 257.2831600680206
+      },
+      "size": {
+        "width": 560,
+        "height": 360
+      },
+      "session": {
+        "agent": "cursor"
+      },
+      "permissionMode": "default",
+      "closedAt": 1788447876050
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn-mtm1052b-8",
+      "source": "term-mtm05g36-7",
+      "target": "term-mtlzb4dk-2",
+      "sourceHandle": "l",
+      "targetHandle": "r"
+    }
+  ],
+  "viewport": {
+    "x": -2623.6774478137377,
+    "y": -142.65038778810572,
+    "zoom": 1
+  },
+  "busCanvasId": "e3a2d49a-a03d-47b2-bf30-49a849f5e9c9"
+}

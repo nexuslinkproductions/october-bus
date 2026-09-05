@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "workspace": {
+    "name": "october-bus",
+    "kind": "folder"
+  },
+  "apps": [
+    {
+      "id": "app",
+      "name": "october-bus",
+      "folder": ".",
+      "framework": "Unknown",
+      "platform": "web",
+      "default": true
+    }
+  ]
+}

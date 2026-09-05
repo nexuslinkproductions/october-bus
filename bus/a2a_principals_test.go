@@ -132,7 +132,7 @@ func TestA2APrincipalAuthorityAndRetention(t *testing.T) {
 	if _, err := agents.runtime.CreateA2APrincipal(ctx, agents.plannerToken, CreateA2APrincipalInput{PublicationID: publication.ID, Label: "Denied"}); err == nil {
 		t.Fatal("agent authority created a remote principal")
 	} else {
-		requireCode(t, err, CodeUnauthenticated)
+		requireCode(t, err, CodePermissionDenied)
 	}
 	otherScope, err := agents.runtime.CreateScope(ctx, CreateScopeInput{ID: "other"})
 	if err != nil {
