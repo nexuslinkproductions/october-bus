@@ -5,18 +5,19 @@
   "adapterId": "cursor-mcp",
   "adapterVersion": "0.1.0",
   "protocolVersion": "0.1",
-  "runtimeVersion": "dev",
+  "runtimeVersion": "v0.1.0-rc.4",
   "operatingSystem": "macos",
   "architecture": "arm64",
   "profile": "mcp-adapter",
   "result": "passed",
-  "resultDigest": "sha256:741babcd2bac9e3a8d7c037daaca22df374a4fbba5ec0d1c4fb2a3508ce037d3",
-  "verifiedAt": "2026-09-03T16:35:56Z",
-  "repositoryCommit": "859b3fbac9d8c2be8bd5afafa0b31563939de552",
+  "resultDigest": "sha256:57527f88d6dc49864f98a19809672ca533af1469dd7d5ff665d5c31c08f2e310",
+  "verifiedAt": "2026-09-06T00:37:00Z",
+  "repositoryCommit": "47acb0fd94cc476c5adffe383af03d03620ebd52",
   "verificationMode": "assisted",
   "limitations": [
     "Pull-only delivery",
     "Process reachability does not prove model readiness",
-    "Verified only on macOS arm64"
+    "Verified only on macOS arm64",
+    "Steps 12-13 completed (restart authority loss, clean offline state, unclean exit lease recovery)"
   ]
 }
