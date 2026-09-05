@@ -1,6 +1,6 @@
 # OpenCode adapter
 
-Status: verified with OpenCode 1.18.25 on macOS arm64. Other versions and platforms remain unverified.
+Status: experimental. OpenCode 1.18.25 MCP client serializes array arguments (messageIds) as JSON strings, causing acknowledge_messages to fail. This is an OpenCode harness limitation, not an October Bus bug. The adapter cannot be verified until the serialization issue is resolved or worked around. Other versions and platforms remain unverified.
 
 Start October Bus, then create a scope. Set `OPENCODE_CONFIG` to the example or merge its `mcp` entry into the project's OpenCode configuration. It launches the stdio bridge inside the managed agent execution.
 

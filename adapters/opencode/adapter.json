@@ -3,7 +3,7 @@
   "id": "opencode-mcp",
   "adapterVersion": "0.1.0",
   "harnessFamily": "OpenCode",
-  "status": "verified",
+  "status": "experimental",
   "protocolVersions": ["0.1"],
   "transport": "mcp",
   "delivery": "pull",
