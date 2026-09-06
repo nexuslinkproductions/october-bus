@@ -221,6 +221,7 @@ type PublishAgentCardInput struct {
 }
 
 type A2APrincipal struct {
+	tokenHash     string
 	ID            string `json:"id"`
 	ScopeID       string `json:"scopeId"`
 	PublicationID string `json:"publicationId"`
@@ -346,6 +347,8 @@ type PruneScopeInput struct {
 }
 
 type RetentionCounts struct {
+	A2ATasks     int64 `json:"a2aTasks"`
+	A2AMessages  int64 `json:"a2aMessages"`
 	Messages     int64 `json:"messages"`
 	Tasks        int64 `json:"tasks"`
 	TaskProgress int64 `json:"taskProgress"`
@@ -442,7 +445,11 @@ type Health struct {
 	Status          string        `json:"status"`
 	StartedAt       string        `json:"startedAt"`
 	Storage         StorageHealth `json:"storage"`
+	Features        []string      `json:"features,omitempty"`
 }
+
+// FeatureSessionRetirement includes idempotent retirement and obligation release.
+const FeatureSessionRetirement = "session-retirement"
 
 const (
 	StorageAvailable   = "available"
