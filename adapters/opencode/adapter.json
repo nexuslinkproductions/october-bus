@@ -30,7 +30,7 @@
     "Not yet conformance-verified",
     "Pull-only delivery",
     "Process reachability does not prove model readiness",
-    "Run had known failures: acknowledge_messages serialization (see evidence)"
+    "Reported acknowledge_messages argument serialization failure; root cause unverified (see compatibility/observations/opencode-1.18.25-macos-arm64.md)"
   ],
   "conformanceCommand": "october-bus-conformance --profile mcp-adapter --start-runtime --adapter-command october-bus --adapter-arg mcp --adapter-arg stdio"
 }
