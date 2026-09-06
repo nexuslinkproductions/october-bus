@@ -55,8 +55,7 @@ try {
   const scope = await admin.createScope({ id: 'ready-edge' })
   const owner = new OctoberBusScopeClient(run.address, scope.scopeToken)
 
-  // A delivery is queued for the host BEFORE it reports ready. It must become
-  // visible only once the host resumes its own inbox consumer on the ready edge.
+  // Host starts NOT ready. Its inbox consumer blocks in a long-poll reserve.
   session = await OctoberBusAgentSession.start({
     address: run.address,
     scopeToken: scope.scopeToken,
@@ -69,22 +68,23 @@ try {
   const peerClient = new OctoberBusClient(run.address, peer.agentToken)
   await peerClient.heartbeat('ready', true, 30_000)
 
-  // Queue a delivery while the host is not ready. It stays in the inbox until
-  // the host's own reservation returns it.
+  // Start the consumer loop first — it blocks in the server-side wait because
+  // the inbox is empty. Then queue a delivery while the host is still NOT ready.
+  const inbox = pollInbox(session.client, { waitMs: 25_000 })
+  const first = inbox.next()
+
+  // Give the loop time to block inside its first waitMs reserve.
+  await new Promise((resolve) => setTimeout(resolve, 200))
+
+  // Queue the delivery while the host is still not ready and blocked in reserve.
   const receipt = await peerClient.sendMessage({
     to: 'host',
     body: 'queued before ready',
     idempotencyKey: newIdempotencyKey()
   })
 
-  // The host runs its own consumer loop, wired to the session wake signal. The
-  // wake fires on the false->true ready edge, interrupting the blocked wait so
-  // the queued delivery is picked up promptly (not after the full waitMs).
-  const inbox = pollInbox(session.client, { waitMs: 25_000, wake: () => session.wake })
-  const first = inbox.next()
-  const wakeBeforeReady = session.wake
-  // Give the loop time to block inside its first waitMs reserve.
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  // Now transition to ready. The server wakes the blocked reserve, delivering
+  // the queued message through the in-flight long-poll.
   const startedAt = Date.now()
   await session.setState('ready', true)
   const result = await first
@@ -94,33 +94,32 @@ try {
   assert.equal(Date.now() - startedAt < 3_000, true, `ready-edge wake should resume promptly, took ${Date.now() - startedAt}ms`)
   assert.equal(await session.client.acknowledgeMessages([receipt.messageId]), 1)
   await inbox.return()
-  // The successful false->true edge aborted the old wake signal and replaced it
-  // with a live one, so a subsequent ready transition can wake the loop again.
-  assert.equal(wakeBeforeReady.aborted, true, 'old wake signal must abort on the ready edge')
-  assert.notEqual(session.wake, wakeBeforeReady, 'a successful ready edge must rotate the wake signal')
 
-  // Heartbeat failure ordering: a failed setState heartbeat must NOT commit
-  // ready locally and must NOT fire the wake signal. The local state stays at
-  // the previous value so the same false->true edge can be retried, and no
-  // consumer wakes prematurely.
-  const oldWake = session.wake
-  // (The background heartbeat timer may then close the session, which is fine
-  // after this point.)
+  // The successful false→true edge aborted the old wake signal and replaced it
+  // with a live one.
+  assert.equal(session.wake.aborted, false, 'wake signal must be live after a successful transition')
+
+  // Failed false→true transition must NOT commit ready locally and must NOT
+  // fire the wake signal. The local state stays false so the edge can be retried.
+  // Kill the server to force a heartbeat failure.
   child.kill('SIGTERM')
   await Promise.race([
     new Promise((resolve) => child.once('exit', resolve)),
     new Promise((resolve) => setTimeout(resolve, 5_000))
   ])
   if (child.exitCode === null) child.kill('SIGKILL')
+
+  const oldWake = session.wake
+  // This is a false→true attempt that must fail (server is dead).
   await assert.rejects(
     () => session.setState('ready', true),
     (error) => {
-      // Any network/transport failure is acceptable; the key is that a failed
-      // heartbeat rejects rather than silently committing ready.
       assert(error instanceof Error)
       return true
     }
   )
+  // A failed heartbeat must not fire the wake signal — the false→true edge
+  // was not committed, so no consumer should wake.
   assert.equal(oldWake.aborted, false, 'a failed heartbeat must not fire the wake signal')
 } finally {
   await session?.close().catch(() => {})

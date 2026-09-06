@@ -60,6 +60,8 @@ export class OctoberBusAgentSession {
   private readonly heartbeatIntervalMs: number
   private lifecycle: AgentLifecycle
   private ready: boolean
+  private stateGeneration = 0
+  private committedGeneration = 0
   private timer: ReturnType<typeof setTimeout> | undefined
   private pendingHeartbeat: Promise<Agent> | undefined
   private resolveDone!: () => void
@@ -68,11 +70,11 @@ export class OctoberBusAgentSession {
   private wakeController: AbortController = new AbortController()
 
   /**
-   * A wake signal that fires on every false->true ready transition. Wire it to
-   * {@link pollInbox} (`wake: session.wake`) so a host reporting ready=true
-   * promptly resumes its own inbox loop and picks up queued deliveries. The
-   * signal is replaced after each transition, so callers should read `wake`
-   * per polling iteration (or pass it as a getter to `pollInbox`).
+   * A signal that fires on every false→true ready transition. The server wakes
+   * a blocked inbox reserve on the ready edge, so queued deliveries arrive
+   * through the host's in-flight long-poll without any client-side wiring.
+   * The signal is replaced after each transition; callers should read `wake`
+   * per use (or pass a getter) rather than caching the signal.
    */
   get wake(): AbortSignal {
     return this.wakeController.signal
@@ -129,18 +131,21 @@ export class OctoberBusAgentSession {
   async setState(lifecycle: AgentLifecycle, ready: boolean): Promise<Agent> {
     if (this.closed) throw new Error('agent session is closed')
     if (lifecycle === 'offline' && ready) throw new Error('offline agents cannot be ready')
-    // The heartbeat runs first and internal state is only committed once it
-    // succeeds. If it fails, `this.ready` still reflects the previous state,
-    // so a later retry of the same transition still sees the false->true edge
-    // and fires the wake signal again.
+    // Each setState call claims a monotonic generation so overlapping calls
+    // commit in order: a stale response cannot overwrite a newer committed state
+    // and background heartbeats never republish an already-superseded value.
+    const gen = ++this.stateGeneration
     const agent = await this.client.heartbeat(lifecycle, ready, this.leaseMs)
-    const becameReady = ready && !this.ready
+    if (gen < this.stateGeneration) {
+      // A newer setState was initiated while this one was in flight. Drop this
+      // response so it does not overwrite the later call's committed state.
+      return agent
+    }
+    const wasReady = this.ready
     this.lifecycle = lifecycle
     this.ready = ready
-    if (becameReady) {
-      // Signal the host's own consumer loop (via pollInbox's `wake`) so it
-      // resumes immediately and owns the queued deliveries. Nothing is pulled
-      // or discarded here: the host keeps every returned batch.
+    this.committedGeneration = gen
+    if (ready && !wasReady) {
       this.wakeController.abort()
       this.wakeController = new AbortController()
     }

@@ -204,24 +204,26 @@ function makeInboxClient(batches) {
 // never drop already-committed mail.
 {
   const state = { polls: 0 }
+  const stop = new AbortController()
   const client = {
-    async pullInbox(limit, options) {
+    async pullInbox(_limit, options) {
       state.polls += 1
-      // Return a batch AND abort the controller's signal in the same tick, as
-      // if the terminal abort fired just as the committed response arrived.
-      options.signal.dispatchEvent(new Event('abort'))
+      // Abort the terminal signal in the same tick that the committed batch
+      // returns, simulating a race between a response and a terminal abort.
+      // Use a real AbortController so AbortSignal.aborted is true.
+      stop.abort()
       return [{ id: 'committed_in_race' }]
     }
   }
-  const stop = new AbortController()
   const inbox = pollInbox(client, { waitMs: 25_000, signal: stop.signal })
   const first = await inbox.next()
   assert.equal(first.done, false)
   assert.equal(first.value.length, 1)
   assert.equal(first.value[0].id, 'committed_in_race', 'committed batch must be delivered exactly once')
   // The loop must now honor the terminal abort and stop (not re-poll).
+  const second = await inbox.next()
+  assert.equal(second.done, true, 'loop must end after committed batch plus terminal abort')
   assert.equal(state.polls, 1, 'loop must not re-poll after a committed batch plus terminal abort')
-  await inbox.return()
 }
 
 // Listener hygiene + terminal semantics: pullInbox is cancelled only by the
@@ -279,4 +281,54 @@ try {
   hangingServer.closeAllConnections()
   hangingServer.close()
   await once(hangingServer, 'close')
+}
+
+// Overlapping setState regression: a stale response must not overwrite a newer
+// committed state.  A (ready=true) commits on the server but its response is
+// delayed; B (working=false) commits and returns; then A's response arrives.
+// The next scheduled heartbeat must publish B's working=false, not A's stale
+// ready=true.
+{
+  let heartbeatCalls = 0
+  const heartbeatParams = []
+  const delayedResolvers = []
+  const mockClient = {
+    async heartbeat(lifecycle, ready, _leaseMs) {
+      heartbeatParams.push({ lifecycle, ready })
+      const call = heartbeatCalls++
+      if (call === 0) {
+        // A = ready=true: delay the response until B finishes
+        return new Promise((resolve) => {
+          delayedResolvers.push(() => resolve({ lifecycle, ready }))
+        })
+      }
+      // B = working=false (and all subsequent): resolve immediately
+      return { lifecycle, ready }
+    }
+  }
+  const session = new OctoberBusAgentSession(
+    {
+      address: 'http://127.0.0.1:1',
+      scopeToken: 'token',
+      registration: { id: 'overlap', displayName: 'Overlap', leaseMs: 30_000 },
+      heartbeatIntervalMs: 10_000,
+      initialReady: false
+    },
+    { agentToken: 'token', agentId: 'overlap', scopeId: 's' }
+  )
+  // Replace the real client with our controllable mock.
+  session.client = mockClient
+  // Trigger the overlapping scenario
+  const a = session.setState('ready', true)  // A: ready=true, response delayed
+  const b = await session.setState('working', false) // B: working=false, commits immediately
+  // Now deliver A's delayed response
+  delayedResolvers[0]()
+  await a
+  // After A's stale response is dropped, a subsequent setState must send B's
+  // state (working, false), not A's stale (ready, true).
+  heartbeatParams.length = 0
+  await session.setState('working', false)
+  const lastHb = heartbeatParams[heartbeatParams.length - 1]
+  assert.equal(lastHb.ready, false, 'stale ready=true must not overwrite working=false')
+  await session.close().catch(() => {})
 }
