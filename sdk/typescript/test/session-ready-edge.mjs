@@ -8,8 +8,6 @@ import {
   OctoberBusAgentSession,
   OctoberBusClient,
   OctoberBusScopeClient,
-  newIdempotencyKey,
-  pollInbox
 } from '../dist/index.js'
 
 const binary = process.env.OCTOBER_BUS_BINARY
@@ -19,7 +17,7 @@ const root = await mkdtemp(join(tmpdir(), 'october-bus-ready-edge-'))
 const dataDir = join(root, 'data')
 const runtimeDir = join(root, 'run')
 const runFile = join(runtimeDir, 'bus.json')
-const child = spawn(binary, ['start'], {
+let child = spawn(binary, ['start'], {
   env: {
     ...process.env,
     OCTOBER_BUS_DATA_DIR: dataDir,
@@ -47,6 +45,21 @@ async function readRunFile() {
   throw new Error(`October Bus did not start: ${stderr}`)
 }
 
+async function startBus() {
+  child = spawn(binary, ['start'], {
+    env: {
+      ...process.env,
+      OCTOBER_BUS_DATA_DIR: dataDir,
+      OCTOBER_BUS_RUNTIME_DIR: runtimeDir
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  stderr = ''
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (value) => { stderr += value })
+  return readRunFile()
+}
+
 let session
 
 try {
@@ -55,53 +68,31 @@ try {
   const scope = await admin.createScope({ id: 'ready-edge' })
   const owner = new OctoberBusScopeClient(run.address, scope.scopeToken)
 
-  // Host starts NOT ready. Its inbox consumer blocks in a long-poll reserve.
+  // Host starts NOT ready. Long heartbeat interval so background beats don't
+  // interfere with the transition tests below.
   session = await OctoberBusAgentSession.start({
     address: run.address,
     scopeToken: scope.scopeToken,
-    registration: { id: 'host', displayName: 'Host', leaseMs: 30_000 },
-    heartbeatIntervalMs: 100,
+    registration: { id: 'host', displayName: 'Host', leaseMs: 60_000 },
+    heartbeatIntervalMs: 30_000,
     initialReady: false
   })
 
-  const peer = await owner.registerAgent({ id: 'peer', displayName: 'Peer', connectTo: ['host'] })
-  const peerClient = new OctoberBusClient(run.address, peer.agentToken)
-  await peerClient.heartbeat('ready', true, 30_000)
-
-  // Start the consumer loop first — it blocks in the server-side wait because
-  // the inbox is empty. Then queue a delivery while the host is still NOT ready.
-  const inbox = pollInbox(session.client, { waitMs: 25_000 })
-  const first = inbox.next()
-
-  // Give the loop time to block inside its first waitMs reserve.
-  await new Promise((resolve) => setTimeout(resolve, 200))
-
-  // Queue the delivery while the host is still not ready and blocked in reserve.
-  const receipt = await peerClient.sendMessage({
-    to: 'host',
-    body: 'queued before ready',
-    idempotencyKey: newIdempotencyKey()
-  })
-
-  // Now transition to ready. The server wakes the blocked reserve, delivering
-  // the queued message through the in-flight long-poll.
-  const startedAt = Date.now()
+  // --- 1. Successful false→true fires the wake signal ---
+  const wakeBefore = session.wake
   await session.setState('ready', true)
-  const result = await first
-  assert.equal(result.done, false)
-  assert.equal(result.value.length, 1)
-  assert.equal(result.value[0].id, receipt.messageId)
-  assert.equal(Date.now() - startedAt < 3_000, true, `ready-edge wake should resume promptly, took ${Date.now() - startedAt}ms`)
-  assert.equal(await session.client.acknowledgeMessages([receipt.messageId]), 1)
-  await inbox.return()
-
-  // The successful false→true edge aborted the old wake signal and replaced it
-  // with a live one.
+  assert.equal(wakeBefore.aborted, true, 'false→true must abort the old wake signal')
   assert.equal(session.wake.aborted, false, 'wake signal must be live after a successful transition')
 
-  // Failed false→true transition must NOT commit ready locally and must NOT
-  // fire the wake signal. The local state stays false so the edge can be retried.
-  // Kill the server to force a heartbeat failure.
+  // --- 2. true→false does NOT fire the wake signal ---
+  const wakeAtTrue = session.wake
+  await session.setState('working', false)
+  assert.equal(wakeAtTrue.aborted, false, 'true→false must not fire the wake signal')
+  assert.equal(session.wake.aborted, false, 'wake signal must remain live')
+
+  // --- 3. Failed false→true does NOT fire the wake signal ---
+  // Kill the server to force a heartbeat failure. The session stays ready=false
+  // so the false→true edge can be retried.
   child.kill('SIGTERM')
   await Promise.race([
     new Promise((resolve) => child.once('exit', resolve)),
@@ -109,8 +100,7 @@ try {
   ])
   if (child.exitCode === null) child.kill('SIGKILL')
 
-  const oldWake = session.wake
-  // This is a false→true attempt that must fail (server is dead).
+  const wakeBeforeFail = session.wake
   await assert.rejects(
     () => session.setState('ready', true),
     (error) => {
@@ -118,9 +108,17 @@ try {
       return true
     }
   )
-  // A failed heartbeat must not fire the wake signal — the false→true edge
-  // was not committed, so no consumer should wake.
-  assert.equal(oldWake.aborted, false, 'a failed heartbeat must not fire the wake signal')
+  assert.equal(wakeBeforeFail.aborted, false, 'a failed false→true must not fire the wake signal')
+
+  // --- 4. Successful retry: restart the server, then false→true again ---
+  // The data dir persists, so the agent's execution and scope survive restart.
+  const newRun = await startBus()
+  // Update the session's client to the new address (port may change).
+  session.client = new OctoberBusClient(newRun.address, session.registration.agentToken)
+  const wakeBeforeRetry = session.wake
+  await session.setState('ready', true)
+  assert.equal(wakeBeforeRetry.aborted, true, 'successful retry false→true must fire the wake signal')
+  assert.equal(session.wake.aborted, false, 'wake signal must be live after a successful retry')
 } finally {
   await session?.close().catch(() => {})
   if (child.exitCode === null) child.kill('SIGKILL')

@@ -60,8 +60,7 @@ export class OctoberBusAgentSession {
   private readonly heartbeatIntervalMs: number
   private lifecycle: AgentLifecycle
   private ready: boolean
-  private stateGeneration = 0
-  private committedGeneration = 0
+  private lifecycleQueue: Promise<void> = Promise.resolve()
   private timer: ReturnType<typeof setTimeout> | undefined
   private pendingHeartbeat: Promise<Agent> | undefined
   private resolveDone!: () => void
@@ -131,25 +130,30 @@ export class OctoberBusAgentSession {
   async setState(lifecycle: AgentLifecycle, ready: boolean): Promise<Agent> {
     if (this.closed) throw new Error('agent session is closed')
     if (lifecycle === 'offline' && ready) throw new Error('offline agents cannot be ready')
-    // Each setState call claims a monotonic generation so overlapping calls
-    // commit in order: a stale response cannot overwrite a newer committed state
-    // and background heartbeats never republish an already-superseded value.
-    const gen = ++this.stateGeneration
-    const agent = await this.client.heartbeat(lifecycle, ready, this.leaseMs)
-    if (gen < this.stateGeneration) {
-      // A newer setState was initiated while this one was in flight. Drop this
-      // response so it does not overwrite the later call's committed state.
+    return this.enqueueHeartbeat(lifecycle, ready)
+  }
+
+  private enqueueHeartbeat(lifecycle?: AgentLifecycle, ready?: boolean): Promise<Agent> {
+    const operation = this.lifecycleQueue.then(async () => {
+      if (this.closed) throw new Error('agent session is closed')
+      // Read the last-confirmed state when this turn starts, not when it was
+      // scheduled. A background heartbeat picks up whatever an earlier explicit
+      // setState already confirmed; a queued explicit call uses its own args.
+      const nextLifecycle = lifecycle ?? this.lifecycle
+      const nextReady = ready ?? this.ready
+      const agent = await this.client.heartbeat(nextLifecycle, nextReady, this.leaseMs)
+      const wasReady = this.ready
+      this.lifecycle = nextLifecycle
+      this.ready = nextReady
+      if (nextReady && !wasReady) {
+        this.wakeController.abort()
+        this.wakeController = new AbortController()
+      }
       return agent
-    }
-    const wasReady = this.ready
-    this.lifecycle = lifecycle
-    this.ready = ready
-    this.committedGeneration = gen
-    if (ready && !wasReady) {
-      this.wakeController.abort()
-      this.wakeController = new AbortController()
-    }
-    return agent
+    })
+    // Keep the queue drainable after a failed write so cleanup is never skipped.
+    this.lifecycleQueue = operation.then(() => undefined, () => undefined)
+    return operation
   }
 
   async close(): Promise<void> {
@@ -157,7 +161,10 @@ export class OctoberBusAgentSession {
     this.closed = true
     if (this.timer !== undefined) clearTimeout(this.timer)
     try {
-      await this.pendingHeartbeat
+      // Drain the lifecycle queue so pending setState/heartbeats complete before
+      // sending the offline heartbeat. A failed write doesn't wedge the queue
+      // (the chain resets on both settle paths), so this always resolves.
+      await this.lifecycleQueue
       await this.client.heartbeat('offline', false, this.leaseMs)
     } catch (error) {
       if (this.sessionError === undefined) this.sessionError = error
@@ -169,7 +176,10 @@ export class OctoberBusAgentSession {
   private scheduleHeartbeat(): void {
     if (this.closed) return
     this.timer = setTimeout(() => {
-      this.pendingHeartbeat = this.client.heartbeat(this.lifecycle, this.ready, this.leaseMs)
+      // Background heartbeats go through the same queue as explicit setState.
+      // They read the last-confirmed state when their turn starts, so they never
+      // overwrite a newer explicit write that confirmed while they were queued.
+      this.pendingHeartbeat = this.enqueueHeartbeat()
       void this.pendingHeartbeat.then(
         () => {
           this.pendingHeartbeat = undefined

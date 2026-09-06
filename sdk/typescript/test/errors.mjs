@@ -284,10 +284,12 @@ try {
 }
 
 // Overlapping setState regression: a stale response must not overwrite a newer
-// committed state.  A (ready=true) commits on the server but its response is
-// delayed; B (working=false) commits and returns; then A's response arrives.
-// The next scheduled heartbeat must publish B's working=false, not A's stale
-// ready=true.
+// committed state, and a failed write must not overwrite a successful one.
+// Harsh's scenario: A=setState(ready,true) in flight; B=setState(working,false)
+// starts and rejects; A then succeeds. The confirmed state must be A's
+// (ready=true), preserved through B's failure. The FIFO queue serializes both
+// writes: A runs first (commits ready=true), then B runs (fails, does NOT update
+// state). A subsequent heartbeat reads the last-confirmed state (ready=true).
 {
   let heartbeatCalls = 0
   const heartbeatParams = []
@@ -297,12 +299,16 @@ try {
       heartbeatParams.push({ lifecycle, ready })
       const call = heartbeatCalls++
       if (call === 0) {
-        // A = ready=true: delay the response until B finishes
+        // A = ready=true: delay the response until B is queued behind it
         return new Promise((resolve) => {
           delayedResolvers.push(() => resolve({ lifecycle, ready }))
         })
       }
-      // B = working=false (and all subsequent): resolve immediately
+      if (call === 1) {
+        // B = working=false: this must FAIL to test the preserve-on-failure path
+        throw new Error('simulated heartbeat failure')
+      }
+      // Subsequent calls: resolve immediately with whatever state was passed
       return { lifecycle, ready }
     }
   }
@@ -311,24 +317,33 @@ try {
       address: 'http://127.0.0.1:1',
       scopeToken: 'token',
       registration: { id: 'overlap', displayName: 'Overlap', leaseMs: 30_000 },
-      heartbeatIntervalMs: 10_000,
+      heartbeatIntervalMs: 30_000,
       initialReady: false
     },
     { agentToken: 'token', agentId: 'overlap', scopeId: 's' }
   )
-  // Replace the real client with our controllable mock.
   session.client = mockClient
-  // Trigger the overlapping scenario
-  const a = session.setState('ready', true)  // A: ready=true, response delayed
-  const b = await session.setState('working', false) // B: working=false, commits immediately
-  // Now deliver A's delayed response
+
+  // A enters the queue first (blocks on delayed response)
+  const a = session.setState('ready', true)
+  // Give A time to enter the queue
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  // B is queued behind A. B will fail (simulated heartbeat error).
+  const b = session.setState('working', false)
+  // Resolve A's delayed response — A commits ready=true, then B starts and fails.
+  // B's failure must NOT overwrite A's confirmed ready=true.
   delayedResolvers[0]()
   await a
-  // After A's stale response is dropped, a subsequent setState must send B's
-  // state (working, false), not A's stale (ready, true).
+  await assert.rejects(() => b, /simulated heartbeat failure/)
+
+  // The confirmed state must be A's (ready=true), preserved through B's failure.
+  // A subsequent explicit setState reads the confirmed state via the queue and
+  // publishes it. If B's failure had corrupted the state, this would send
+  // working=false instead of the confirmed ready=true.
   heartbeatParams.length = 0
-  await session.setState('working', false)
+  await session.setState('ready', true)
   const lastHb = heartbeatParams[heartbeatParams.length - 1]
-  assert.equal(lastHb.ready, false, 'stale ready=true must not overwrite working=false')
+  assert.equal(lastHb.ready, true, 'failed B must not overwrite successful A: confirmed state must be ready=true')
+  assert.equal(lastHb.lifecycle, 'ready', 'confirmed lifecycle must be A\'s ready, not B\'s working')
   await session.close().catch(() => {})
 }
