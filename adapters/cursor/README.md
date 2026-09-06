@@ -1,6 +1,6 @@
 # Cursor adapter
 
-Status: experimental. A full RUNBOOK run (steps 1–13) was completed against Cursor 3.18.9 headless via `cursor-agent -p` with a released October Bus runtime (`v0.1.0-rc.4`) on macOS arm64. The run log and evidence digest are recorded in `compatibility/evidence/cursor-3.18.9-macos-arm64.json`. The adapter remains experimental pending independent compatibility review; other versions and platforms remain unverified.
+Status: experimental, not yet conformance-verified. A contributor reports completing RUNBOOK steps 1–13 with Cursor 3.18.9 headless via `cursor-agent -p` and October Bus `v0.1.0-rc.4` on macOS arm64. The [attempt notes](../../compatibility/observations/cursor-3.18.9-macos-arm64.md) preserve the reported digest, but do not include a public run log. Independent compatibility review is still required; other versions and platforms remain unverified.
 
 Start October Bus, then create a scope. Copy or merge the example into `.cursor/mcp.json` in the project where Cursor will run. It launches the stdio bridge inside the managed agent execution.
 

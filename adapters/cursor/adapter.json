@@ -27,6 +27,7 @@
   "maintainer": "October",
   "repository": "https://github.com/october-dev/october-bus",
   "limitations": [
+    "Not yet conformance-verified",
     "Pull-only delivery",
     "Process reachability does not prove model readiness",
     "Run observed on macOS arm64 only; pending independent compatibility review"
