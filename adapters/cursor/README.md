@@ -1,6 +1,6 @@
 # Cursor adapter
 
-Status: experimental. Cursor 3.18.9 RUNBOOK steps 1-11b passed, but steps 12-13 (restart authority loss, unclean lease recovery) are not yet complete. The committed evidence still has runtimeVersion: dev and an incomplete digest. Other versions and platforms remain unverified.
+Status: experimental. A full RUNBOOK run (steps 1–13) was completed against Cursor 3.18.9 headless via `cursor-agent -p` with a released October Bus runtime (`v0.1.0-rc.4`) on macOS arm64. The run log and evidence digest are recorded in `compatibility/evidence/cursor-3.18.9-macos-arm64.json`. The adapter remains experimental pending independent compatibility review; other versions and platforms remain unverified.
 
 Start October Bus, then create a scope. Copy or merge the example into `.cursor/mcp.json` in the project where Cursor will run. It launches the stdio bridge inside the managed agent execution.
 

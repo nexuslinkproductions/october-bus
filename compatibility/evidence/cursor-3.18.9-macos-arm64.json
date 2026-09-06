@@ -9,7 +9,7 @@
   "operatingSystem": "macos",
   "architecture": "arm64",
   "profile": "mcp-adapter",
-  "result": "passed",
+  "result": "observed",
   "resultDigest": "sha256:57527f88d6dc49864f98a19809672ca533af1469dd7d5ff665d5c31c08f2e310",
   "verifiedAt": "2026-09-06T00:37:00Z",
   "repositoryCommit": "47acb0fd94cc476c5adffe383af03d03620ebd52",
@@ -17,7 +17,7 @@
   "limitations": [
     "Pull-only delivery",
     "Process reachability does not prove model readiness",
-    "Verified only on macOS arm64",
-    "Steps 12-13 completed (restart authority loss, clean offline state, unclean exit lease recovery)"
+    "Headless cursor-agent (no interactive approval prompts)",
+    "Run observed on macOS arm64 only; pending independent compatibility review"
   ]
 }
