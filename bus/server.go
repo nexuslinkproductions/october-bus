@@ -234,6 +234,10 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 type emptyInput struct{}
 
 func (s *Server) newMCPServer(token string) *mcp.Server {
+	// Avoid naming an MCP tool input struct field Title: #110 found the
+	// generated schema dropped the title property for it, so addTaskInput
+	// below uses TaskTitle with a `json:"title"` tag. Keep that pattern
+	// for any tool that needs a title parameter.
 	server := mcp.NewServer(&mcp.Implementation{Name: "october-bus", Version: Version}, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "list_peers", Description: "List linked agents and their capabilities."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, any, error) {
